@@ -65,6 +65,7 @@ type worker struct {
 }
 
 func (s *Starter) startWorker(ctx context.Context) (*worker, error) {
+RETRY:
 	w, err := s.tryToStartWorker(context.Background())
 	if err != nil {
 		return nil, err
@@ -74,6 +75,16 @@ func (s *Starter) startWorker(ctx context.Context) (*worker, error) {
 	time.Sleep(s.interval())
 
 	// TODO: check the worker is still alive, and retry
+	if state := w.ProcessState(); state != nil {
+		var msg string
+		if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
+			msg = "exit status: " + strconv.Itoa(s.ExitStatus())
+		} else {
+			msg = state.String()
+		}
+		s.logf("new worker %d seems to have failed to start, %s", w.Pid(), msg)
+		goto RETRY
+	}
 
 	return w, nil
 }
@@ -96,6 +107,7 @@ func (s *Starter) tryToStartWorker(ctx context.Context) (*worker, error) {
 		ports[i] = fmt.Sprintf("%s=%d", l.Addr().String(), i+3)
 	}
 
+	s.generation++
 	ctx, cancel := context.WithCancel(ctx)
 	env := os.Environ()
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
@@ -104,7 +116,6 @@ func (s *Starter) tryToStartWorker(ctx context.Context) (*worker, error) {
 	cmd.ExtraFiles = files
 	env = append(env, fmt.Sprintf("%s=%s", PortEnvName, strings.Join(ports, ";")))
 	env = append(env, fmt.Sprintf("%s=%d", GenerationEnvName, s.generation))
-	s.generation++
 	cmd.Env = env
 	w := &worker{
 		ctx:        ctx,
@@ -155,6 +166,17 @@ func (w *worker) Pid() int {
 
 func (w *worker) Signal(sig os.Signal) {
 	w.chsig <- sig
+}
+
+// ProcessState contains information about an exited process.
+// Return nil while the worker is running.
+func (w *worker) ProcessState() *os.ProcessState {
+	select {
+	case <-w.ctx.Done():
+	default:
+		return nil
+	}
+	return w.cmd.ProcessState
 }
 
 func (w *worker) close() error {
