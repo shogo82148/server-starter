@@ -98,6 +98,22 @@ func (ll ListenConfigs) Listen(ctx context.Context, network, address string) (ne
 	return nil, fmt.Errorf("listener: address %s is not being bound to the server", address)
 }
 
+// ListenAll announces on the local network address.
+func (ll ListenConfigs) ListenAll(ctx context.Context) ([]net.Listener, error) {
+	ret := make([]net.Listener, 0, len(ll))
+	for _, lc := range ll {
+		l, err := lc.Listen()
+		if err != nil {
+			for _, l := range ret {
+				l.Close()
+			}
+			return nil, err
+		}
+		ret = append(ret, l)
+	}
+	return ret, nil
+}
+
 type listenConfig struct {
 	addr string
 	fd   uintptr
@@ -112,7 +128,7 @@ func (l listenConfig) Fd() uintptr {
 }
 
 func (l listenConfig) Listen() (net.Listener, error) {
-	return net.FileListener(os.NewFile(l.Fd(), l.addr))
+	return net.FileListener(os.NewFile(l.fd, l.addr))
 }
 
 func parseListenTargets(str string) (ListenConfigs, error) {
