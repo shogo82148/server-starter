@@ -32,7 +32,7 @@ func TestRun(t *testing.T) {
 
 	sd := &Starter{
 		Command: binFile,
-		Ports:   []string{"12345"},
+		Ports:   []string{"0"},
 	}
 	defer sd.Shutdown(context.Background())
 	go func() {
@@ -44,7 +44,8 @@ func TestRun(t *testing.T) {
 	time.Sleep(500 * time.Millisecond) // wait for starting worker
 
 	// connect to the first worker.
-	conn, err := net.Dial("tcp", "127.0.0.1:12345")
+	addr := sd.Listeners()[0].Addr().String()
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatalf("fail to dial: %s", err)
 	}
@@ -77,7 +78,7 @@ func TestRun(t *testing.T) {
 	// TODO: check status file
 
 	// connect to the second worker.
-	conn, err = net.Dial("tcp", "127.0.0.1:12345")
+	conn, err = net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatalf("fail to dial: %s", err)
 	}

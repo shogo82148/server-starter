@@ -170,6 +170,7 @@ func (w *worker) close() error {
 }
 
 func (s *Starter) listen(ctx context.Context) error {
+	var listeners []net.Listener
 	var lc net.ListenConfig
 	for _, port := range s.Ports {
 		if idx := strings.LastIndexByte(port, '='); idx >= 0 {
@@ -184,9 +185,19 @@ func (s *Starter) listen(ctx context.Context) error {
 			// TODO: error handling.
 			return err
 		}
-		s.listeners = append(s.listeners, l)
+		listeners = append(listeners, l)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.listeners = listeners
 	return nil
+}
+
+// Listeners returns the listeners.
+func (s *Starter) Listeners() []net.Listener {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.listeners
 }
 
 // Reload XX
