@@ -11,8 +11,9 @@ import (
 	"strings"
 )
 
-// ServerStarterEnvVarName is the environment name for server_starter configures.
-const ServerStarterEnvVarName = "SERVER_STARTER_PORT"
+// PortEnvName is the environment name for server_starter configures.
+// copied from the starter package.
+const PortEnvName = "SERVER_STARTER_PORT"
 
 // ErrNoListeningTarget is returned by ListenAll calls
 // when the process is not started using server_starter.
@@ -163,7 +164,7 @@ func parseListenTargets(str string) (ListenConfigs, error) {
 // environment variable.
 // If it is not set, return the empty string.
 func PortsSpecification() string {
-	return os.Getenv(ServerStarterEnvVarName)
+	return os.Getenv(PortEnvName)
 }
 
 // Ports parses environment variable SERVER_STARTER_PORT

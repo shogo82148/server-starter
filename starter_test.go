@@ -30,6 +30,7 @@ func TestRun(t *testing.T) {
 	go func() {
 		sd := &Starter{
 			Command: binFile,
+			Ports:   []string{"12345"},
 		}
 		if err := sd.Run(); err != nil {
 			t.Errorf("sd.Run() failed: %s", err)
