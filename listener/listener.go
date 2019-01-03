@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"strconv"
@@ -114,7 +115,7 @@ func (l listenConfig) Listen() (net.Listener, error) {
 	return net.FileListener(os.NewFile(l.Fd(), l.addr))
 }
 
-func parseListenTargets(str string) ([]ListenConfig, error) {
+func parseListenTargets(str string) (ListenConfigs, error) {
 	if str == "" {
 		return nil, ErrNoListeningTarget
 	}
@@ -151,5 +152,16 @@ func PortsSpecification() string {
 
 // Ports parses environment variable SERVER_STARTER_PORT
 func Ports() (ListenConfigs, error) {
-	return parseListenTargets(PortsSpecification())
+	ll, err := parseListenTargets(PortsSpecification())
+	if err != nil {
+		return nil, err
+	}
+
+	// emulate Perl's hash randomization
+	// to eeproduce the original behavior of https://metacpan.org/pod/Server::Starter#server_ports
+	rand.Shuffle(len(ll), func(i, j int) {
+		ll[i], ll[j] = ll[j], ll[i]
+	})
+
+	return ll, nil
 }

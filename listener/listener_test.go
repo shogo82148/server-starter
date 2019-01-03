@@ -1,7 +1,6 @@
 package listener
 
 import (
-	"os"
 	"reflect"
 	"testing"
 )
@@ -45,8 +44,7 @@ func TestPort(t *testing.T) {
 	}
 
 	for i, tc := range caces {
-		os.Setenv(ServerStarterEnvVarName, tc.in)
-		ll, err := Ports()
+		ll, err := parseListenTargets(tc.in)
 		if err != nil {
 			t.Error(err)
 			continue
@@ -70,8 +68,7 @@ func TestPort(t *testing.T) {
 		"0.0.0.0:80",     // missing fd
 	}
 	for i, tc := range errs {
-		os.Setenv(ServerStarterEnvVarName, tc)
-		ll, err := Ports()
+		ll, err := parseListenTargets(tc)
 		if err == nil {
 			t.Errorf("#%d: want error, got nil", i)
 		}
@@ -82,9 +79,7 @@ func TestPort(t *testing.T) {
 }
 
 func TestPortNoEnv(t *testing.T) {
-	os.Setenv(ServerStarterEnvVarName, "")
-
-	ports, err := Ports()
+	ports, err := parseListenTargets("")
 	if err != ErrNoListeningTarget {
 		t.Error("Ports must return error if no env")
 	}
