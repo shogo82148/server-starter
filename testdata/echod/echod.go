@@ -62,8 +62,7 @@ func handle(conn net.Conn) {
 func watchSignal() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGTERM, syscall.SIGUSR1)
-	for sig := range c {
-		log.Println(sig)
+	for range c {
 		go func() {
 			time.Sleep(2 * time.Second)
 			os.Exit(0)

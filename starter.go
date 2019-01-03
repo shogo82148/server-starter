@@ -8,8 +8,12 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
+	"time"
 )
 
 // PortEnvName is the environment name for server_starter configures.
@@ -26,10 +30,16 @@ type Starter struct {
 	// Ports to bind to (addr:port or port, so it's a string)
 	Ports []string
 
+	Interval time.Duration
+
 	Logger *log.Logger
 
 	listeners  []net.Listener
 	generation int
+
+	mu       sync.RWMutex
+	chreload chan struct{}
+	workers  map[*worker]struct{}
 }
 
 // Run starts the specified command.
@@ -37,10 +47,38 @@ func (s *Starter) Run() error {
 	if err := s.listen(context.Background()); err != nil {
 		return err
 	}
-	return s.runWorker(context.Background())
+	if _, err := s.startWorker(context.Background()); err != nil {
+		return err
+	}
+
+	// TODO: watch the workers, and wail for stopping all.
+	select {}
 }
 
-func (s *Starter) runWorker(ctx context.Context) error {
+type worker struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	cmd        *exec.Cmd
+	generation int
+	starter    *Starter
+	chsig      chan os.Signal
+}
+
+func (s *Starter) startWorker(ctx context.Context) (*worker, error) {
+	w, err := s.tryToStartWorker(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	s.logf("starting new worker %d", w.Pid())
+
+	time.Sleep(s.interval())
+
+	// TODO: check the worker is still alive, and retry
+
+	return w, nil
+}
+
+func (s *Starter) tryToStartWorker(ctx context.Context) (*worker, error) {
 	type filer interface {
 		File() (*os.File, error)
 	}
@@ -49,9 +87,8 @@ func (s *Starter) runWorker(ctx context.Context) error {
 	for i, l := range s.listeners {
 		f, err := l.(filer).File()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		defer f.Close()
 		files[i] = f
 
 		// file descriptor numbers in ExtraFiles turn out to be
@@ -59,6 +96,7 @@ func (s *Starter) runWorker(ctx context.Context) error {
 		ports[i] = fmt.Sprintf("%s=%d", l.Addr().String(), i+3)
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	env := os.Environ()
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
 	cmd.Stdout = os.Stdout
@@ -68,13 +106,67 @@ func (s *Starter) runWorker(ctx context.Context) error {
 	env = append(env, fmt.Sprintf("%s=%d", GenerationEnvName, s.generation))
 	s.generation++
 	cmd.Env = env
-	if err := cmd.Start(); err != nil {
-		s.logf("failed to exec %s: %s", s.Command, err)
-	} else {
-		pid := cmd.Process.Pid
-		s.logf("starting new worker %d", pid)
+	w := &worker{
+		ctx:        ctx,
+		cancel:     cancel,
+		cmd:        cmd,
+		generation: s.generation,
+		starter:    s,
+		chsig:      make(chan os.Signal, 1),
 	}
-	return cmd.Wait()
+
+	if err := w.cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	if s.workers == nil {
+		s.workers = make(map[*worker]struct{})
+	}
+	s.workers[w] = struct{}{}
+	s.mu.Unlock()
+
+	go w.Wait()
+	return w, nil
+}
+
+func (w *worker) Wait() error {
+	defer w.close()
+
+	done := make(chan struct{})
+	go func() {
+		w.cmd.Wait()
+		close(done)
+	}()
+
+	for {
+		select {
+		case sig := <-w.chsig:
+			w.cmd.Process.Signal(sig)
+		case <-done:
+			return nil
+		}
+	}
+}
+
+func (w *worker) Pid() int {
+	return w.cmd.Process.Pid
+}
+
+func (w *worker) Signal(sig os.Signal) {
+	w.chsig <- sig
+}
+
+func (w *worker) close() error {
+	for _, f := range w.cmd.ExtraFiles {
+		f.Close()
+	}
+	w.cancel()
+
+	w.starter.mu.Lock()
+	delete(w.starter.workers, w)
+	w.starter.mu.Unlock()
+	return nil
 }
 
 func (s *Starter) listen(ctx context.Context) error {
@@ -93,6 +185,96 @@ func (s *Starter) listen(ctx context.Context) error {
 			return err
 		}
 		s.listeners = append(s.listeners, l)
+	}
+	return nil
+}
+
+// Reload XX
+func (s *Starter) Reload(ctx context.Context) error {
+	chreload := s.getChReaload()
+	select {
+	case chreload <- struct{}{}:
+		defer func() {
+			<-chreload
+		}()
+	default:
+		return nil
+	}
+
+	s.logf("received HUP, spawning a new worker")
+
+	w, err := s.startWorker(context.Background())
+	if err != nil {
+		return err
+	}
+
+	tmp := s.listWorkers()
+	workers := tmp[:0]
+	for _, w2 := range tmp {
+		if w2 != w {
+			workers = append(workers, w2)
+		}
+	}
+	pids := "none"
+	if len(workers) > 0 {
+		var b strings.Builder
+		for _, w := range workers {
+			fmt.Fprintf(&b, "%d,", w.Pid())
+		}
+		pids = b.String()
+		pids = pids[:len(pids)-1] // remove last ','
+	}
+	s.logf("new worker is now running, sending SIGTERM to old workers: %s", pids)
+
+	s.logf("killing old workers")
+	for _, w := range workers {
+		w.Signal(syscall.SIGTERM)
+	}
+
+	return nil
+}
+
+func (s *Starter) getChReaload() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.chreload == nil {
+		s.chreload = make(chan struct{}, 1)
+	}
+	return s.chreload
+}
+
+func (s *Starter) interval() time.Duration {
+	if s.Interval > 0 {
+		return s.Interval
+	}
+	return time.Second
+}
+
+func (s *Starter) listWorkers() []*worker {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	workers := make([]*worker, 0, len(s.workers))
+	for w := range s.workers {
+		workers = append(workers, w)
+	}
+	sort.Slice(workers, func(i, j int) bool {
+		return workers[i].Pid() < workers[i].Pid()
+	})
+	return workers
+}
+
+// Shutdown terminates all workers.
+func (s *Starter) Shutdown(ctx context.Context) error {
+	workers := s.listWorkers()
+	for _, w := range workers {
+		w.Signal(syscall.SIGTERM)
+	}
+	for _, w := range workers {
+		select {
+		case <-w.ctx.Done():
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	return nil
 }
