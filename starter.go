@@ -80,9 +80,13 @@ RETRY:
 	}
 	s.logf("starting new worker %d", w.Pid())
 
-	time.Sleep(s.interval())
+	timer := time.NewTimer(s.interval())
+	select {
+	case <-w.ctx.Done():
+	case <-timer.C:
+		timer.Reset(0)
+	}
 
-	// TODO: check the worker is still alive, and retry
 	if state := w.ProcessState(); state != nil {
 		var msg string
 		if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
@@ -91,8 +95,10 @@ RETRY:
 			msg = state.String()
 		}
 		s.logf("new worker %d seems to have failed to start, %s", w.Pid(), msg)
+		<-timer.C
 		goto RETRY
 	}
+	timer.Stop()
 
 	return w, nil
 }
@@ -257,6 +263,7 @@ func (s *Starter) Reload(ctx context.Context) error {
 
 	s.logf("received HUP, spawning a new worker")
 
+RETRY:
 	w, err := s.startWorker(context.Background())
 	if err != nil {
 		return err
@@ -282,7 +289,22 @@ func (s *Starter) Reload(ctx context.Context) error {
 
 	if delay := s.killOldDelay(); delay > 0 {
 		s.logf("sleeping %d secs before killing old workers", int64(delay/time.Second))
-		time.Sleep(delay)
+		timer := time.NewTimer(s.killOldDelay())
+		select {
+		case <-timer.C:
+		case <-w.ctx.Done():
+			timer.Stop()
+			// the new worker dies during sleep, restarting.
+			state := w.ProcessState()
+			var msg string
+			if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
+				msg = "exit status: " + strconv.Itoa(s.ExitStatus())
+			} else {
+				msg = state.String()
+			}
+			s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
+			goto RETRY
+		}
 	}
 
 	s.logf("killing old workers")
