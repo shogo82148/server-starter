@@ -1,9 +1,11 @@
 package starter
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -34,6 +36,9 @@ type Starter struct {
 
 	// KillOlddeplay is time to suspend to send a signal to the old worker.
 	KillOldDelay time.Duration
+
+	// if set, writes the status of the server process(es) to the file
+	StatusFile string
 
 	Logger *log.Logger
 
@@ -139,6 +144,7 @@ func (s *Starter) tryToStartWorker(ctx context.Context) (*worker, error) {
 	}
 	s.workers[w] = struct{}{}
 	s.mu.Unlock()
+	s.updateStatus()
 
 	go w.Wait()
 	return w, nil
@@ -202,6 +208,7 @@ func (w *worker) close() error {
 	w.starter.mu.Lock()
 	delete(w.starter.workers, w)
 	w.starter.mu.Unlock()
+	w.starter.updateStatus()
 	return nil
 }
 
@@ -336,6 +343,31 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// updateStatus writes the workers' status into StatusFile.
+func (s *Starter) updateStatus() {
+	if s.StatusFile == "" {
+		return // nothing to do
+	}
+	workers := s.listWorkers()
+	sort.Slice(workers, func(i, j int) bool {
+		return workers[i].generation < workers[i].generation
+	})
+
+	var buf bytes.Buffer
+	for _, w := range workers {
+		fmt.Fprintf(&buf, "%d:%d\n", w.generation, w.Pid())
+	}
+	tmp := fmt.Sprintf("%s.%d", s.StatusFile, os.Getegid())
+	if err := ioutil.WriteFile(tmp, buf.Bytes(), 0666); err != nil {
+		s.logf("failed to create temporary file:%s:%s", tmp, err)
+		return
+	}
+	if err := os.Rename(tmp, s.StatusFile); err != nil {
+		s.logf("failed to rename %s to %s:%s", tmp, s.StatusFile, err)
+		return
+	}
 }
 
 func (s *Starter) logf(format string, args ...interface{}) {

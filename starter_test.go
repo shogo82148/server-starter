@@ -30,9 +30,11 @@ func Test_Start(t *testing.T) {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
 
+	statusFile := filepath.Join(dir, "status")
 	sd := &Starter{
-		Command: binFile,
-		Ports:   []string{"0"},
+		Command:    binFile,
+		Ports:      []string{"0"},
+		StatusFile: statusFile,
 	}
 	defer sd.Shutdown(context.Background())
 	go func() {
@@ -64,7 +66,13 @@ func Test_Start(t *testing.T) {
 	conn.Close()
 
 	time.Sleep(3 * time.Second)
-	// TODO: check status file
+	status, err := ioutil.ReadFile(statusFile)
+	if err != nil {
+		t.Errorf("fail to read status file %s: %s", statusFile, err)
+	}
+	if ok, _ := regexp.Match(`^1:\d+\n$`, status); !ok {
+		t.Errorf(`want /^1:\d+\n$/, got %s`, status)
+	}
 
 	// Reload
 	// 0sec: start a new worker
@@ -72,9 +80,22 @@ func Test_Start(t *testing.T) {
 	// 3sec: the old worker stops.
 	go sd.Reload(context.Background())
 	time.Sleep(2 * time.Second)
-	// TODO: check status file
+	status, err = ioutil.ReadFile(statusFile)
+	if err != nil {
+		t.Errorf("fail to read status file %s: %s", statusFile, err)
+	}
+	if ok, _ := regexp.Match(`^1:\d+\n2:\d+\n$`, status); !ok {
+		t.Errorf(`want /^1:\d+\n2:\d+\n$/, got %s`, status)
+	}
+
 	time.Sleep(2 * time.Second)
-	// TODO: check status file
+	status, err = ioutil.ReadFile(statusFile)
+	if err != nil {
+		t.Errorf("fail to read status file %s: %s", statusFile, err)
+	}
+	if ok, _ := regexp.Match(`^2:\d+\n$`, status); !ok {
+		t.Errorf(`want /^2:\d+\n$/, got %s`, status)
+	}
 
 	// connect to the second worker.
 	conn, err = net.Dial("tcp", addr)
@@ -178,10 +199,12 @@ func Test_KillOldDeplay(t *testing.T) {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
 
+	statusFile := filepath.Join(dir, "status")
 	sd := &Starter{
 		Command:      binFile,
 		Ports:        []string{"0"},
 		KillOldDelay: 3 * time.Second,
+		StatusFile:   statusFile,
 	}
 	defer sd.Shutdown(context.Background())
 	go func() {
@@ -221,10 +244,24 @@ func Test_KillOldDeplay(t *testing.T) {
 	// 4sec: send SIGTERM to the old worker.
 	// 5sec: the old worker stops.
 	go sd.Reload(context.Background())
+
 	time.Sleep(4 * time.Second)
-	// TODO: check status file
+	status, err := ioutil.ReadFile(statusFile)
+	if err != nil {
+		t.Errorf("fail to read status file %s: %s", statusFile, err)
+	}
+	if ok, _ := regexp.Match(`^1:\d+\n2:\d+\n$`, status); !ok {
+		t.Errorf(`want /1:\d+\n2:\d+\n/, got %s`, status)
+	}
+
 	time.Sleep(2 * time.Second)
-	// TODO: check status file
+	status, err = ioutil.ReadFile(statusFile)
+	if err != nil {
+		t.Errorf("fail to read status file %s: %s", statusFile, err)
+	}
+	if ok, _ := regexp.Match(`^2:\d+\n$`, status); !ok {
+		t.Errorf(`want /2:\d+\n/, got %s`, status)
+	}
 
 	// connect to the second worker.
 	conn, err = net.Dial("tcp", addr)
