@@ -32,6 +32,9 @@ type Starter struct {
 
 	Interval time.Duration
 
+	// KillOlddeplay is time to suspend to send a signal to the old worker.
+	KillOldDelay time.Duration
+
 	Logger *log.Logger
 
 	listeners  []net.Listener
@@ -148,6 +151,17 @@ func (w *worker) Wait() error {
 	go func() {
 		w.cmd.Wait()
 		close(done)
+
+		var msg string
+		state := w.cmd.ProcessState
+		if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
+			msg = "exit status: " + strconv.Itoa(s.ExitStatus())
+		} else {
+			msg = state.String()
+		}
+
+		// TODO: check the worker is currect.
+		w.starter.logf("old worker %d died, %s", w.Pid(), msg)
 	}()
 
 	for {
@@ -259,6 +273,11 @@ func (s *Starter) Reload(ctx context.Context) error {
 	}
 	s.logf("new worker is now running, sending SIGTERM to old workers: %s", pids)
 
+	if delay := s.killOldDelay(); delay > 0 {
+		s.logf("sleeping %d secs before killing old workers", int64(delay/time.Second))
+		time.Sleep(delay)
+	}
+
 	s.logf("killing old workers")
 	for _, w := range workers {
 		w.Signal(syscall.SIGTERM)
@@ -281,6 +300,13 @@ func (s *Starter) interval() time.Duration {
 		return s.Interval
 	}
 	return time.Second
+}
+
+func (s *Starter) killOldDelay() time.Duration {
+	if s.KillOldDelay > 0 {
+		return s.KillOldDelay
+	}
+	return 0 // TODO: The default value is 5 when --enable-auto-restart is set
 }
 
 func (s *Starter) listWorkers() []*worker {

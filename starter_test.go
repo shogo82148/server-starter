@@ -163,3 +163,86 @@ func Test_StartFail(t *testing.T) {
 		t.Errorf("want %s, got %s", "5", generation)
 	}
 }
+
+func Test_KillOldDeplay(t *testing.T) {
+	dir, err := ioutil.TempDir("", "server-starter-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %s", err)
+	}
+	defer os.RemoveAll(dir)
+
+	// build echod
+	binFile := filepath.Join(dir, "killolddelay")
+	cmd := exec.Command("go", "build", "-o", binFile, "testdata/killolddelay/main.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
+	}
+
+	sd := &Starter{
+		Command:      binFile,
+		Ports:        []string{"0"},
+		KillOldDelay: 3 * time.Second,
+	}
+	defer sd.Shutdown(context.Background())
+	go func() {
+		if err := sd.Run(); err != nil {
+			t.Errorf("sd.Run() failed: %s", err)
+		}
+	}()
+
+	time.Sleep(500 * time.Millisecond) // wait for starting worker
+
+	// connect to the first worker.
+	addr := sd.Listeners()[0].Addr().String()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("fail to dial: %s", err)
+	}
+	if _, err := conn.Write([]byte("hello")); err != nil {
+		t.Fatalf("fail to write: %s", err)
+	}
+	var buf [1024 * 1024]byte
+	n, err := conn.Read(buf[:])
+	if err != nil {
+		t.Fatalf("fail to read: %s", err)
+	}
+	if ok, _ := regexp.Match(`^\d+:hello$`, buf[:n]); !ok {
+		t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
+	}
+	pid1 := string(buf[:bytes.IndexByte(buf[:], ':')])
+	conn.Close()
+
+	time.Sleep(3 * time.Second)
+	// TODO: check status file
+
+	// Reload
+	// 0sec: start a new worker
+	// 1sec: if the new worker is still alive, sleep kill_old_deplay sec.
+	// 4sec: send SIGTERM to the old worker.
+	// 5sec: the old worker stops.
+	go sd.Reload(context.Background())
+	time.Sleep(4 * time.Second)
+	// TODO: check status file
+	time.Sleep(2 * time.Second)
+	// TODO: check status file
+
+	// connect to the second worker.
+	conn, err = net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("fail to dial: %s", err)
+	}
+	if _, err := conn.Write([]byte("hello")); err != nil {
+		t.Fatalf("fail to write: %s", err)
+	}
+	n, err = conn.Read(buf[:])
+	if err != nil {
+		t.Fatalf("fail to read: %s", err)
+	}
+	if ok, _ := regexp.Match(`^\d+:hello$`, buf[:n]); !ok {
+		t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
+	}
+	pid2 := string(buf[:bytes.IndexByte(buf[:], ':')])
+	if pid1 == pid2 {
+		t.Errorf("want another, got %s", pid2)
+	}
+}

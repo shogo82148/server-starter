@@ -12,8 +12,6 @@ import (
 	"github.com/shogo82148/server-starter/listener"
 )
 
-var pid []byte
-
 func main() {
 	go watchSignal()
 
