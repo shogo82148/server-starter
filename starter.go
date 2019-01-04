@@ -34,6 +34,12 @@ type Starter struct {
 
 	Interval time.Duration
 
+	// Signal to send when HUP is received
+	SignalOnHUP os.Signal
+
+	// Signal to send when TERM is received
+	SignalOnTERM os.Signal
+
 	// KillOlddeplay is time to suspend to send a signal to the old worker.
 	KillOldDelay time.Duration
 
@@ -309,7 +315,7 @@ RETRY:
 
 	s.logf("killing old workers")
 	for _, w := range workers {
-		w.Signal(syscall.SIGTERM)
+		w.Signal(s.signalOnHUP())
 	}
 
 	return nil
@@ -338,6 +344,20 @@ func (s *Starter) killOldDelay() time.Duration {
 	return 0 // TODO: The default value is 5 when --enable-auto-restart is set
 }
 
+func (s *Starter) signalOnHUP() os.Signal {
+	if s.SignalOnHUP != nil {
+		return s.SignalOnHUP
+	}
+	return syscall.SIGTERM
+}
+
+func (s *Starter) signalOnTERM() os.Signal {
+	if s.SignalOnTERM != nil {
+		return s.SignalOnTERM
+	}
+	return syscall.SIGTERM
+}
+
 func (s *Starter) listWorkers() []*worker {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -355,7 +375,7 @@ func (s *Starter) listWorkers() []*worker {
 func (s *Starter) Shutdown(ctx context.Context) error {
 	workers := s.listWorkers()
 	for _, w := range workers {
-		w.Signal(syscall.SIGTERM)
+		w.Signal(s.signalOnTERM())
 	}
 	for _, w := range workers {
 		select {
