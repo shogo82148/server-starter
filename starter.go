@@ -91,9 +91,9 @@ func (s *Starter) Run() error {
 	if err != nil {
 		return err
 	}
-	w.chwatch <- struct{}{}
+	w.Signal(nil, workerStateReady)
 
-	<-ctx.Done()
+	s.wg.Wait()
 	return nil
 }
 
@@ -124,8 +124,33 @@ type worker struct {
 	cmd        *exec.Cmd
 	generation int
 	starter    *Starter
-	chsig      chan os.Signal
-	chwatch    chan struct{}
+	chsig      chan workerSignal
+}
+
+type workerState int
+
+const (
+	// workerStateInit is initail status of worker.
+	// The Stater watches the process state, and restart if necessary.
+	workerStateInit workerState = iota
+
+	// workerStateReady means starting the worker is success.
+	// the worker should watch the state itself, and restart if necessary.
+	workerStateReady
+
+	// workerStateOld means the worker is marked as old.
+	// The Stater starts another new worker.
+	workerStateOld
+
+	// workerStateShutdown means the Starter is shutting down.
+	workerStateShutdown
+)
+
+type workerSignal struct {
+	// signal to send the worker process.
+	signal os.Signal
+
+	state workerState
 }
 
 func (s *Starter) startWorker() (*worker, error) {
@@ -193,8 +218,7 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		cmd:        cmd,
 		generation: s.generation,
 		starter:    s,
-		chsig:      make(chan os.Signal),
-		chwatch:    make(chan struct{}),
+		chsig:      make(chan workerSignal),
 	}
 
 	if err := w.cmd.Start(); err != nil {
@@ -215,47 +239,53 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 }
 
 func (w *worker) Wait() error {
+	defer w.starter.wg.Done()
+	state := workerStateInit
 	ch := make(chan struct{})
 	go func() {
 		defer close(ch)
 		defer w.close()
-		defer w.starter.wg.Done()
 		w.cmd.Wait()
 	}()
 
-	var rcv bool
 	var done <-chan struct{}
 	for {
 		select {
 		case sig := <-w.chsig:
-			w.cmd.Process.Signal(sig)
-			rcv = true
-		case <-w.chwatch:
-			// starting worker has finished.
-			// start watching in this goroutine.
-			done = w.ctx.Done()
+			if sig.signal != nil {
+				w.cmd.Process.Signal(sig.signal)
+			}
+			state = sig.state
+			if state == workerStateReady {
+				done = w.ctx.Done()
+			}
 		case <-ch:
-			return nil
+			if done == nil {
+				return nil
+			}
 		case <-done:
 			var msg string
-			state := w.cmd.ProcessState
-			if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
+			st := w.cmd.ProcessState
+			if s, ok := st.Sys().(syscall.WaitStatus); ok && s.Exited() {
 				msg = "status: " + strconv.Itoa(s.ExitStatus())
 			} else {
-				msg = state.String()
+				msg = st.String()
 			}
 			s := w.starter
-			if rcv {
+			switch state {
+			case workerStateOld:
 				s.logf("old worker %d died, %s", w.Pid(), msg)
-			} else {
+			case workerStateReady:
 				s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
 				go func() {
 					w, err := s.startWorker()
 					if err != nil {
 						return
 					}
-					w.chwatch <- struct{}{}
+					w.Signal(nil, workerStateReady)
 				}()
+			case workerStateShutdown:
+				s.logf("worker %d died, %s", w.Pid(), msg)
 			}
 			return nil
 		}
@@ -266,11 +296,12 @@ func (w *worker) Pid() int {
 	return w.cmd.Process.Pid
 }
 
-func (w *worker) Signal(sig os.Signal) {
-	select {
-	case w.chsig <- sig:
-	case <-w.ctx.Done():
+func (w *worker) Signal(sig os.Signal, state workerState) {
+	s := workerSignal{
+		signal: sig,
+		state:  state,
 	}
+	w.chsig <- s
 }
 
 // ProcessState contains information about an exited process.
@@ -383,11 +414,11 @@ RETRY:
 			goto RETRY
 		}
 	}
-	w.chwatch <- struct{}{}
+	w.Signal(nil, workerStateReady)
 
 	s.logf("killing old workers")
 	for _, w := range workers {
-		w.Signal(s.signalOnHUP())
+		w.Signal(s.signalOnHUP(), workerStateOld)
 	}
 
 	return nil
@@ -447,7 +478,7 @@ func (s *Starter) listWorkers() []*worker {
 func (s *Starter) Shutdown(ctx context.Context) error {
 	workers := s.listWorkers()
 	for _, w := range workers {
-		w.Signal(s.signalOnTERM())
+		w.Signal(s.signalOnTERM(), workerStateShutdown)
 	}
 	for _, w := range workers {
 		select {
@@ -470,18 +501,21 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 		buf.WriteByte(',')
 		buf.WriteString(strconv.Itoa(w.Pid()))
 	}
+	if len(workers) == 0 {
+		buf.WriteString(",none")
+	}
 	s.logf("received %s, sending %s to all workers:%s", recv, signal, buf.String()[1:])
 
 	for _, w := range workers {
-		w.Signal(s.signalOnTERM())
+		w.Signal(signal, workerStateShutdown)
 	}
 	for _, w := range workers {
 		select {
 		case <-w.ctx.Done():
 		}
 	}
-	s.logf("exiting")
 	s.Close()
+	s.logf("exiting")
 }
 
 // Close terminates all workers immediately.
