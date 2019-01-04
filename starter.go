@@ -223,7 +223,13 @@ func (w *worker) Wait() error {
 				s.logf("old worker %d died, %s", w.Pid(), msg)
 			} else {
 				s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
-				go s.startWorker()
+				go func() {
+					w, err := s.startWorker()
+					if err != nil {
+						return
+					}
+					w.chwatch <- struct{}{}
+				}()
 			}
 			return nil
 		}
