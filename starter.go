@@ -191,12 +191,12 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 }
 
 func (w *worker) Wait() error {
-	defer w.close()
-	defer w.starter.wg.Done()
-
+	ch := make(chan struct{})
 	go func() {
+		defer close(ch)
+		defer w.close()
+		defer w.starter.wg.Done()
 		w.cmd.Wait()
-		w.cancel()
 	}()
 
 	var rcv bool
@@ -210,6 +210,8 @@ func (w *worker) Wait() error {
 			// starting worker has finished.
 			// start watching in this goroutine.
 			done = w.ctx.Done()
+		case <-ch:
+			return nil
 		case <-done:
 			var msg string
 			state := w.cmd.ProcessState
@@ -259,6 +261,7 @@ func (w *worker) close() error {
 	for _, f := range w.cmd.ExtraFiles {
 		f.Close()
 	}
+	w.cancel()
 
 	w.starter.mu.Lock()
 	delete(w.starter.workers, w)
