@@ -32,6 +32,9 @@ type Starter struct {
 	// Ports to bind to (addr:port or port, so it's a string)
 	Ports []string
 
+	// TODO:
+	Paths []string
+
 	Interval time.Duration
 
 	// Signal to send when HUP is received
@@ -45,6 +48,19 @@ type Starter struct {
 
 	// if set, writes the status of the server process(es) to the file
 	StatusFile string
+
+	// TODO:
+	EnvDir              string
+	EnableAutoRestart   bool
+	AutoRestartInterval time.Duration
+	Restart             bool
+	Stop                bool
+	Help                bool
+	Version             bool
+	Daemonize           bool
+	LogFile             string
+	PidFile             string
+	Dir                 string
 
 	Logger *log.Logger
 
@@ -175,12 +191,12 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 }
 
 func (w *worker) Wait() error {
-	defer w.close()
-	defer w.starter.wg.Done()
-
+	ch := make(chan struct{})
 	go func() {
+		defer close(ch)
+		defer w.close()
+		defer w.starter.wg.Done()
 		w.cmd.Wait()
-		w.cancel()
 	}()
 
 	var rcv bool
@@ -194,6 +210,8 @@ func (w *worker) Wait() error {
 			// starting worker has finished.
 			// start watching in this goroutine.
 			done = w.ctx.Done()
+		case <-ch:
+			return nil
 		case <-done:
 			var msg string
 			state := w.cmd.ProcessState
@@ -207,7 +225,13 @@ func (w *worker) Wait() error {
 				s.logf("old worker %d died, %s", w.Pid(), msg)
 			} else {
 				s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
-				go s.startWorker()
+				go func() {
+					w, err := s.startWorker()
+					if err != nil {
+						return
+					}
+					w.chwatch <- struct{}{}
+				}()
 			}
 			return nil
 		}
@@ -237,6 +261,7 @@ func (w *worker) close() error {
 	for _, f := range w.cmd.ExtraFiles {
 		f.Close()
 	}
+	w.cancel()
 
 	w.starter.mu.Lock()
 	delete(w.starter.workers, w)
@@ -425,7 +450,7 @@ func (s *Starter) updateStatus() {
 	}
 	workers := s.listWorkers()
 	sort.Slice(workers, func(i, j int) bool {
-		return workers[i].generation < workers[i].generation
+		return workers[i].generation < workers[j].generation
 	})
 
 	var buf bytes.Buffer
