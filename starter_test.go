@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"syscall"
 	"testing"
 	"time"
 
@@ -30,92 +31,107 @@ func Test_Start(t *testing.T) {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
 
-	statusFile := filepath.Join(dir, "status")
-	sd := &Starter{
-		Command:    binFile,
-		Ports:      []string{"0"},
-		StatusFile: statusFile,
-	}
-	defer sd.Shutdown(context.Background())
-	go func() {
-		if err := sd.Run(); err != nil {
-			t.Errorf("sd.Run() failed: %s", err)
+	testFunc := func(t *testing.T, signal os.Signal, signame string) {
+		statusFile := filepath.Join(dir, "status")
+		sd := &Starter{
+			Command:     binFile,
+			Args:        []string{filepath.Join(dir, "signame")},
+			Ports:       []string{"0"},
+			StatusFile:  statusFile,
+			SignalOnHUP: signal,
 		}
-	}()
+		defer sd.Shutdown(context.Background())
+		go func() {
+			if err := sd.Run(); err != nil {
+				t.Errorf("sd.Run() failed: %s", err)
+			}
+		}()
 
-	time.Sleep(500 * time.Millisecond) // wait for starting worker
+		time.Sleep(500 * time.Millisecond) // wait for starting worker
 
-	// connect to the first worker.
-	addr := sd.Listeners()[0].Addr().String()
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatalf("fail to dial: %s", err)
-	}
-	if _, err := conn.Write([]byte("hello")); err != nil {
-		t.Fatalf("fail to write: %s", err)
-	}
-	var buf [1024 * 1024]byte
-	n, err := conn.Read(buf[:])
-	if err != nil {
-		t.Fatalf("fail to read: %s", err)
-	}
-	if ok, _ := regexp.Match(`^\d+:hello$`, buf[:n]); !ok {
-		t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
-	}
-	pid1 := string(buf[:bytes.IndexByte(buf[:], ':')])
-	conn.Close()
+		// connect to the first worker.
+		addr := sd.Listeners()[0].Addr().String()
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("fail to dial: %s", err)
+		}
+		if _, err := conn.Write([]byte("hello")); err != nil {
+			t.Fatalf("fail to write: %s", err)
+		}
+		var buf [1024 * 1024]byte
+		n, err := conn.Read(buf[:])
+		if err != nil {
+			t.Fatalf("fail to read: %s", err)
+		}
+		if ok, _ := regexp.Match(`^\d+:hello$`, buf[:n]); !ok {
+			t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
+		}
+		pid1 := string(buf[:bytes.IndexByte(buf[:], ':')])
+		conn.Close()
 
-	time.Sleep(3 * time.Second)
-	status, err := ioutil.ReadFile(statusFile)
-	if err != nil {
-		t.Errorf("fail to read status file %s: %s", statusFile, err)
-	}
-	if ok, _ := regexp.Match(`^1:\d+\n$`, status); !ok {
-		t.Errorf(`want /^1:\d+\n$/, got %s`, status)
-	}
+		time.Sleep(3 * time.Second)
+		status, err := ioutil.ReadFile(statusFile)
+		if err != nil {
+			t.Errorf("fail to read status file %s: %s", statusFile, err)
+		}
+		if ok, _ := regexp.Match(`^1:\d+\n$`, status); !ok {
+			t.Errorf(`want /^1:\d+\n$/, got %s`, status)
+		}
 
-	// Reload
-	// 0sec: start a new worker
-	// 1sec: if the new worker is still alive, send SIGTERM to the old one.
-	// 3sec: the old worker stops.
-	go sd.Reload()
-	time.Sleep(2 * time.Second)
-	status, err = ioutil.ReadFile(statusFile)
-	if err != nil {
-		t.Errorf("fail to read status file %s: %s", statusFile, err)
-	}
-	if ok, _ := regexp.Match(`^1:\d+\n2:\d+\n$`, status); !ok {
-		t.Errorf(`want /^1:\d+\n2:\d+\n$/, got %s`, status)
-	}
+		// Reload
+		// 0sec: start a new worker
+		// 1sec: if the new worker is still alive, send SIGTERM to the old one.
+		// 3sec: the old worker stops.
+		go sd.Reload()
+		time.Sleep(2 * time.Second)
+		status, err = ioutil.ReadFile(statusFile)
+		if err != nil {
+			t.Errorf("fail to read status file %s: %s", statusFile, err)
+		}
+		if ok, _ := regexp.Match(`^1:\d+\n2:\d+\n$`, status); !ok {
+			t.Errorf(`want /^1:\d+\n2:\d+\n$/, got %s`, status)
+		}
 
-	time.Sleep(2 * time.Second)
-	status, err = ioutil.ReadFile(statusFile)
-	if err != nil {
-		t.Errorf("fail to read status file %s: %s", statusFile, err)
-	}
-	if ok, _ := regexp.Match(`^2:\d+\n$`, status); !ok {
-		t.Errorf(`want /^2:\d+\n$/, got %s`, status)
-	}
+		time.Sleep(2 * time.Second)
+		status, err = ioutil.ReadFile(statusFile)
+		if err != nil {
+			t.Errorf("fail to read status file %s: %s", statusFile, err)
+		}
+		if ok, _ := regexp.Match(`^2:\d+\n$`, status); !ok {
+			t.Errorf(`want /^2:\d+\n$/, got %s`, status)
+		}
 
-	// connect to the second worker.
-	conn, err = net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatalf("fail to dial: %s", err)
+		signameGot, err := ioutil.ReadFile(filepath.Join(dir, "signame"))
+		if string(signameGot) != signame {
+			t.Errorf("want %s, got %s", signame, string(signameGot))
+		}
+
+		// connect to the second worker.
+		conn, err = net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("fail to dial: %s", err)
+		}
+		if _, err := conn.Write([]byte("hello")); err != nil {
+			t.Fatalf("fail to write: %s", err)
+		}
+		n, err = conn.Read(buf[:])
+		if err != nil {
+			t.Fatalf("fail to read: %s", err)
+		}
+		if ok, _ := regexp.Match(`^\d+:hello$`, buf[:n]); !ok {
+			t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
+		}
+		pid2 := string(buf[:bytes.IndexByte(buf[:], ':')])
+		if pid1 == pid2 {
+			t.Errorf("want another, got %s", pid2)
+		}
 	}
-	if _, err := conn.Write([]byte("hello")); err != nil {
-		t.Fatalf("fail to write: %s", err)
-	}
-	n, err = conn.Read(buf[:])
-	if err != nil {
-		t.Fatalf("fail to read: %s", err)
-	}
-	if ok, _ := regexp.Match(`^\d+:hello$`, buf[:n]); !ok {
-		t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
-	}
-	pid2 := string(buf[:bytes.IndexByte(buf[:], ':')])
-	if pid1 == pid2 {
-		t.Errorf("want another, got %s", pid2)
-	}
+	t.Run("TERM", func(t *testing.T) {
+		testFunc(t, nil, syscall.SIGTERM.String())
+	})
+	t.Run("USR1", func(t *testing.T) {
+		testFunc(t, syscall.SIGUSR1, syscall.SIGUSR1.String())
+	})
 }
 
 func Test_StartFail(t *testing.T) {

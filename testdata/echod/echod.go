@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -62,8 +63,10 @@ func handle(conn net.Conn) {
 func watchSignal() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGTERM, syscall.SIGUSR1)
-	for range c {
+	for sig := range c {
+		sig := sig
 		go func() {
+			ioutil.WriteFile(os.Args[1], []byte(sig.String()), 0666)
 			time.Sleep(2 * time.Second)
 			os.Exit(0)
 		}()
