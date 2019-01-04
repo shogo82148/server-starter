@@ -184,16 +184,17 @@ func (w *worker) Wait() error {
 	}()
 
 	var rcv bool
-	var watching bool
+	var done <-chan struct{}
 	for {
 		select {
 		case sig := <-w.chsig:
 			w.cmd.Process.Signal(sig)
 			rcv = true
 		case <-w.chwatch:
-			// starting task has finished.
-			watching = true
-		case <-w.ctx.Done():
+			// starting worker has finished.
+			// start watching in this goroutine.
+			done = w.ctx.Done()
+		case <-done:
 			var msg string
 			state := w.cmd.ProcessState
 			if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
@@ -204,7 +205,7 @@ func (w *worker) Wait() error {
 			s := w.starter
 			if rcv {
 				s.logf("old worker %d died, %s", w.Pid(), msg)
-			} else if watching {
+			} else {
 				s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
 				go s.startWorker()
 			}
