@@ -447,7 +447,7 @@ func (s *Starter) updateStatus() {
 	}
 	workers := s.listWorkers()
 	sort.Slice(workers, func(i, j int) bool {
-		return workers[i].generation < workers[i].generation
+		return workers[i].generation < workers[j].generation
 	})
 
 	var buf bytes.Buffer
