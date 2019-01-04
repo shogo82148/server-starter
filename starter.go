@@ -50,23 +50,32 @@ type Starter struct {
 
 	listeners  []net.Listener
 	generation int
+	ctx        context.Context
+	cancel     context.CancelFunc
 
+	wg       sync.WaitGroup
 	mu       sync.RWMutex
 	chreload chan struct{}
+	chstart  chan struct{}
 	workers  map[*worker]struct{}
 }
 
 // Run starts the specified command.
 func (s *Starter) Run() error {
-	if err := s.listen(context.Background()); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx = ctx
+	s.cancel = cancel
+	if err := s.listen(); err != nil {
 		return err
 	}
-	if _, err := s.startWorker(context.Background()); err != nil {
+	w, err := s.startWorker()
+	if err != nil {
 		return err
 	}
+	w.chwatch <- struct{}{}
 
-	// TODO: watch the workers, and wail for stopping all.
-	select {}
+	<-ctx.Done()
+	return nil
 }
 
 type worker struct {
@@ -76,11 +85,12 @@ type worker struct {
 	generation int
 	starter    *Starter
 	chsig      chan os.Signal
+	chwatch    chan struct{}
 }
 
-func (s *Starter) startWorker(ctx context.Context) (*worker, error) {
+func (s *Starter) startWorker() (*worker, error) {
 RETRY:
-	w, err := s.tryToStartWorker(context.Background())
+	w, err := s.tryToStartWorker()
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +119,7 @@ RETRY:
 	return w, nil
 }
 
-func (s *Starter) tryToStartWorker(ctx context.Context) (*worker, error) {
+func (s *Starter) tryToStartWorker() (*worker, error) {
 	type filer interface {
 		File() (*os.File, error)
 	}
@@ -128,7 +138,7 @@ func (s *Starter) tryToStartWorker(ctx context.Context) (*worker, error) {
 	}
 
 	s.generation++
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(s.ctx)
 	env := os.Environ()
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
 	cmd.Stdout = os.Stdout
@@ -143,7 +153,8 @@ func (s *Starter) tryToStartWorker(ctx context.Context) (*worker, error) {
 		cmd:        cmd,
 		generation: s.generation,
 		starter:    s,
-		chsig:      make(chan os.Signal, 1),
+		chsig:      make(chan os.Signal),
+		chwatch:    make(chan struct{}),
 	}
 
 	if err := w.cmd.Start(); err != nil {
@@ -157,6 +168,7 @@ func (s *Starter) tryToStartWorker(ctx context.Context) (*worker, error) {
 	s.workers[w] = struct{}{}
 	s.mu.Unlock()
 	s.updateStatus()
+	s.wg.Add(1)
 
 	go w.Wait()
 	return w, nil
@@ -164,29 +176,38 @@ func (s *Starter) tryToStartWorker(ctx context.Context) (*worker, error) {
 
 func (w *worker) Wait() error {
 	defer w.close()
+	defer w.starter.wg.Done()
 
-	done := make(chan struct{})
 	go func() {
 		w.cmd.Wait()
-		close(done)
-
-		var msg string
-		state := w.cmd.ProcessState
-		if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
-			msg = "exit status: " + strconv.Itoa(s.ExitStatus())
-		} else {
-			msg = state.String()
-		}
-
-		// TODO: check the worker is currect.
-		w.starter.logf("old worker %d died, %s", w.Pid(), msg)
+		w.cancel()
 	}()
 
+	var rcv bool
+	var watching bool
 	for {
 		select {
 		case sig := <-w.chsig:
 			w.cmd.Process.Signal(sig)
-		case <-done:
+			rcv = true
+		case <-w.chwatch:
+			// starting task has finished.
+			watching = true
+		case <-w.ctx.Done():
+			var msg string
+			state := w.cmd.ProcessState
+			if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
+				msg = "status: " + strconv.Itoa(s.ExitStatus())
+			} else {
+				msg = state.String()
+			}
+			s := w.starter
+			if rcv {
+				s.logf("old worker %d died, %s", w.Pid(), msg)
+			} else if watching {
+				s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
+				go s.startWorker()
+			}
 			return nil
 		}
 	}
@@ -215,7 +236,6 @@ func (w *worker) close() error {
 	for _, f := range w.cmd.ExtraFiles {
 		f.Close()
 	}
-	w.cancel()
 
 	w.starter.mu.Lock()
 	delete(w.starter.workers, w)
@@ -224,7 +244,7 @@ func (w *worker) close() error {
 	return nil
 }
 
-func (s *Starter) listen(ctx context.Context) error {
+func (s *Starter) listen() error {
 	var listeners []net.Listener
 	var lc net.ListenConfig
 	for _, port := range s.Ports {
@@ -235,7 +255,7 @@ func (s *Starter) listen(ctx context.Context) error {
 			// by default, only bind to IPv4 (for compatibility)
 			port = net.JoinHostPort("0.0.0.0", port)
 		}
-		l, err := lc.Listen(ctx, "tcp", port)
+		l, err := lc.Listen(s.ctx, "tcp", port)
 		if err != nil {
 			// TODO: error handling.
 			return err
@@ -256,7 +276,7 @@ func (s *Starter) Listeners() []net.Listener {
 }
 
 // Reload XX
-func (s *Starter) Reload(ctx context.Context) error {
+func (s *Starter) Reload() error {
 	chreload := s.getChReaload()
 	select {
 	case chreload <- struct{}{}:
@@ -270,7 +290,7 @@ func (s *Starter) Reload(ctx context.Context) error {
 	s.logf("received HUP, spawning a new worker")
 
 RETRY:
-	w, err := s.startWorker(context.Background())
+	w, err := s.startWorker()
 	if err != nil {
 		return err
 	}
@@ -312,6 +332,7 @@ RETRY:
 			goto RETRY
 		}
 	}
+	w.chwatch <- struct{}{}
 
 	s.logf("killing old workers")
 	for _, w := range workers {
@@ -384,6 +405,15 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+	return s.Close()
+}
+
+// Close terminates all workers immediately.
+func (s *Starter) Close() error {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.wg.Wait()
 	return nil
 }
 

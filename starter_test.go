@@ -78,7 +78,7 @@ func Test_Start(t *testing.T) {
 	// 0sec: start a new worker
 	// 1sec: if the new worker is still alive, send SIGTERM to the old one.
 	// 3sec: the old worker stops.
-	go sd.Reload(context.Background())
+	go sd.Reload()
 	time.Sleep(2 * time.Second)
 	status, err = ioutil.ReadFile(statusFile)
 	if err != nil {
@@ -168,7 +168,7 @@ func Test_StartFail(t *testing.T) {
 		t.Errorf("want %s, got %s", "2", generation)
 	}
 
-	go sd.Reload(context.Background())
+	go sd.Reload()
 	time.Sleep(1 * time.Second)
 
 	// the 3rd and 4th generation fails to start, so the generation number is still 2.
@@ -243,7 +243,7 @@ func Test_KillOldDeplay(t *testing.T) {
 	// 1sec: if the new worker is still alive, sleep kill_old_deplay sec.
 	// 4sec: send SIGTERM to the old worker.
 	// 5sec: the old worker stops.
-	go sd.Reload(context.Background())
+	go sd.Reload()
 
 	time.Sleep(4 * time.Second)
 	status, err := ioutil.ReadFile(statusFile)
