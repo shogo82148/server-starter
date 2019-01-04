@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,6 +79,8 @@ type Starter struct {
 
 // Run starts the specified command.
 func (s *Starter) Run() error {
+	go s.waitSignal()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	s.cancel = cancel
@@ -92,6 +95,27 @@ func (s *Starter) Run() error {
 
 	<-ctx.Done()
 	return nil
+}
+
+func (s *Starter) waitSignal() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(
+		ch,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT,
+	)
+	for sig := range ch {
+		sig := sig
+		switch sig {
+		case syscall.SIGHUP:
+			s.logf("received HUP, spawning a new worker")
+			go s.Reload()
+		default:
+			go s.shutdownBySignal(sig)
+		}
+	}
 }
 
 type worker struct {
@@ -243,7 +267,10 @@ func (w *worker) Pid() int {
 }
 
 func (w *worker) Signal(sig os.Signal) {
-	w.chsig <- sig
+	select {
+	case w.chsig <- sig:
+	case <-w.ctx.Done():
+	}
 }
 
 // ProcessState contains information about an exited process.
@@ -312,8 +339,6 @@ func (s *Starter) Reload() error {
 	default:
 		return nil
 	}
-
-	s.logf("received HUP, spawning a new worker")
 
 RETRY:
 	w, err := s.startWorker()
@@ -432,6 +457,31 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 		}
 	}
 	return s.Close()
+}
+
+func (s *Starter) shutdownBySignal(recv os.Signal) {
+	signal := os.Signal(syscall.SIGTERM)
+	if recv == syscall.SIGTERM {
+		signal = s.signalOnTERM()
+	}
+	workers := s.listWorkers()
+	var buf strings.Builder
+	for _, w := range workers {
+		buf.WriteByte(',')
+		buf.WriteString(strconv.Itoa(w.Pid()))
+	}
+	s.logf("received %s, sending %s to all workers:%s", recv, signal, buf.String()[1:])
+
+	for _, w := range workers {
+		w.Signal(s.signalOnTERM())
+	}
+	for _, w := range workers {
+		select {
+		case <-w.ctx.Done():
+		}
+	}
+	s.logf("exiting")
+	s.Close()
 }
 
 // Close terminates all workers immediately.
