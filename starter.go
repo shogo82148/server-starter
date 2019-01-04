@@ -32,6 +32,9 @@ type Starter struct {
 	// Ports to bind to (addr:port or port, so it's a string)
 	Ports []string
 
+	// TODO:
+	Paths []string
+
 	Interval time.Duration
 
 	// Signal to send when HUP is received
@@ -45,6 +48,19 @@ type Starter struct {
 
 	// if set, writes the status of the server process(es) to the file
 	StatusFile string
+
+	// TODO:
+	EnvDir              string
+	EnableAutoRestart   bool
+	AutoRestartInterval time.Duration
+	Restart             bool
+	Stop                bool
+	Help                bool
+	Version             bool
+	Daemonize           bool
+	LogFile             string
+	PidFile             string
+	Dir                 string
 
 	Logger *log.Logger
 
