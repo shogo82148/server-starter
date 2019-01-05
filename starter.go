@@ -82,10 +82,8 @@ type Starter struct {
 
 // Run starts the specified command.
 func (s *Starter) Run() error {
-	go s.waitSignal()
-
 	if err := s.openPidFile(); err != nil {
-		return nil
+		return err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -94,11 +92,8 @@ func (s *Starter) Run() error {
 	if err := s.listen(); err != nil {
 		return err
 	}
-	w, err := s.startWorker()
-	if err != nil {
-		return err
-	}
-	w.Watch()
+	s.startWorker().Watch()
+	go s.waitSignal()
 
 	s.wg.Wait()
 	return nil
@@ -176,11 +171,13 @@ type workerSignal struct {
 	state workerState
 }
 
-func (s *Starter) startWorker() (*worker, error) {
+func (s *Starter) startWorker() *worker {
 RETRY:
 	w, err := s.tryToStartWorker()
 	if err != nil {
-		return nil, err
+		s.logf("failed to exec %s:%s", s.Command, err)
+		time.Sleep(s.interval())
+		goto RETRY
 	}
 	s.logf("starting new worker %d", w.Pid())
 
@@ -206,7 +203,7 @@ RETRY:
 	}
 	timer.Stop()
 
-	return w, nil
+	return w
 }
 
 func (s *Starter) tryToStartWorker() (*worker, error) {
@@ -299,11 +296,7 @@ func (w *worker) watch() {
 			case workerStateInit:
 				s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
 				go func() {
-					w, err := s.startWorker()
-					if err != nil {
-						return
-					}
-					w.Watch()
+					s.startWorker().Watch()
 				}()
 			case workerStateOld:
 				s.logf("old worker %d died, %s", w.Pid(), msg)
@@ -404,10 +397,7 @@ func (s *Starter) Reload() error {
 	}
 
 RETRY:
-	w, err := s.startWorker()
-	if err != nil {
-		return err
-	}
+	w := s.startWorker()
 
 	tmp := s.listWorkers()
 	workers := tmp[:0]
