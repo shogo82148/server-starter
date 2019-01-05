@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,6 +79,8 @@ type Starter struct {
 
 // Run starts the specified command.
 func (s *Starter) Run() error {
+	go s.waitSignal()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	s.cancel = cancel
@@ -88,10 +91,31 @@ func (s *Starter) Run() error {
 	if err != nil {
 		return err
 	}
-	w.chwatch <- struct{}{}
+	w.Watch()
 
-	<-ctx.Done()
+	s.wg.Wait()
 	return nil
+}
+
+func (s *Starter) waitSignal() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(
+		ch,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT,
+	)
+	for sig := range ch {
+		sig := sig
+		switch sig {
+		case syscall.SIGHUP:
+			s.logf("received HUP, spawning a new worker")
+			go s.Reload()
+		default:
+			go s.shutdownBySignal(sig)
+		}
+	}
 }
 
 type worker struct {
@@ -100,8 +124,29 @@ type worker struct {
 	cmd        *exec.Cmd
 	generation int
 	starter    *Starter
-	chsig      chan os.Signal
-	chwatch    chan struct{}
+	chsig      chan workerSignal
+}
+
+type workerState int
+
+const (
+	// workerStateInit is initail status of worker.
+	// thw worker restarts itself if necessary.
+	workerStateInit workerState = iota
+
+	// workerStateOld means the worker is marked as old.
+	// The Stater starts another new worker, so the worker does nothing.
+	workerStateOld
+
+	// workerStateShutdown means the Starter is shutting down.
+	workerStateShutdown
+)
+
+type workerSignal struct {
+	// signal to send the worker process.
+	signal os.Signal
+
+	state workerState
 }
 
 func (s *Starter) startWorker() (*worker, error) {
@@ -169,8 +214,7 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		cmd:        cmd,
 		generation: s.generation,
 		starter:    s,
-		chsig:      make(chan os.Signal),
-		chwatch:    make(chan struct{}),
+		chsig:      make(chan workerSignal),
 	}
 
 	if err := w.cmd.Start(); err != nil {
@@ -184,56 +228,67 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	s.workers[w] = struct{}{}
 	s.mu.Unlock()
 	s.updateStatus()
-	s.wg.Add(1)
+	w.Wait()
 
-	go w.Wait()
 	return w, nil
 }
 
-func (w *worker) Wait() error {
-	ch := make(chan struct{})
-	go func() {
-		defer close(ch)
-		defer w.close()
-		defer w.starter.wg.Done()
-		w.cmd.Wait()
-	}()
+func (w *worker) Wait() {
+	w.starter.wg.Add(1)
+	go w.wait()
+}
 
-	var rcv bool
-	var done <-chan struct{}
+func (w *worker) wait() {
+	defer w.starter.wg.Done()
+	defer w.close()
+	w.cmd.Wait()
+}
+
+// start to watch the worker itself.
+// after call the Watch, the worker watches its process and restart itself if necessary.
+func (w *worker) Watch() {
+	w.starter.wg.Add(1)
+	go w.watch()
+}
+
+func (w *worker) watch() {
+	s := w.starter
+	defer s.wg.Done()
+	state := workerStateInit
 	for {
 		select {
 		case sig := <-w.chsig:
-			w.cmd.Process.Signal(sig)
-			rcv = true
-		case <-w.chwatch:
-			// starting worker has finished.
-			// start watching in this goroutine.
-			done = w.ctx.Done()
-		case <-ch:
-			return nil
-		case <-done:
+			state = sig.state
+			err := w.cmd.Process.Signal(sig.signal)
+			if err != nil {
+				s.logf("failed to send signal %s to %d", sig.signal, w.Pid())
+			}
+		case <-w.ctx.Done():
 			var msg string
-			state := w.cmd.ProcessState
-			if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
+			st := w.cmd.ProcessState
+			if s, ok := st.Sys().(syscall.WaitStatus); ok && s.Exited() {
 				msg = "status: " + strconv.Itoa(s.ExitStatus())
 			} else {
-				msg = state.String()
+				msg = st.String()
 			}
-			s := w.starter
-			if rcv {
-				s.logf("old worker %d died, %s", w.Pid(), msg)
-			} else {
+			switch state {
+			case workerStateInit:
 				s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
 				go func() {
 					w, err := s.startWorker()
 					if err != nil {
 						return
 					}
-					w.chwatch <- struct{}{}
+					w.Watch()
 				}()
+			case workerStateOld:
+				s.logf("old worker %d died, %s", w.Pid(), msg)
+			case workerStateShutdown:
+				s.logf("worker %d died, %s", w.Pid(), msg)
+			default:
+				panic(fmt.Sprintf("unknown state: %d", state))
 			}
-			return nil
+			return
 		}
 	}
 }
@@ -242,8 +297,15 @@ func (w *worker) Pid() int {
 	return w.cmd.Process.Pid
 }
 
-func (w *worker) Signal(sig os.Signal) {
-	w.chsig <- sig
+func (w *worker) Signal(sig os.Signal, state workerState) {
+	s := workerSignal{
+		signal: sig,
+		state:  state,
+	}
+	select {
+	case w.chsig <- s:
+	case <-w.ctx.Done():
+	}
 }
 
 // ProcessState contains information about an exited process.
@@ -313,8 +375,6 @@ func (s *Starter) Reload() error {
 		return nil
 	}
 
-	s.logf("received HUP, spawning a new worker")
-
 RETRY:
 	w, err := s.startWorker()
 	if err != nil {
@@ -358,11 +418,11 @@ RETRY:
 			goto RETRY
 		}
 	}
-	w.chwatch <- struct{}{}
+	w.Watch()
 
 	s.logf("killing old workers")
 	for _, w := range workers {
-		w.Signal(s.signalOnHUP())
+		w.Signal(s.signalOnHUP(), workerStateOld)
 	}
 
 	return nil
@@ -422,7 +482,7 @@ func (s *Starter) listWorkers() []*worker {
 func (s *Starter) Shutdown(ctx context.Context) error {
 	workers := s.listWorkers()
 	for _, w := range workers {
-		w.Signal(s.signalOnTERM())
+		w.Signal(s.signalOnTERM(), workerStateShutdown)
 	}
 	for _, w := range workers {
 		select {
@@ -432,6 +492,29 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 		}
 	}
 	return s.Close()
+}
+
+func (s *Starter) shutdownBySignal(recv os.Signal) {
+	signal := os.Signal(syscall.SIGTERM)
+	if recv == syscall.SIGTERM {
+		signal = s.signalOnTERM()
+	}
+	workers := s.listWorkers()
+	var buf strings.Builder
+	for _, w := range workers {
+		buf.WriteByte(',')
+		buf.WriteString(strconv.Itoa(w.Pid()))
+	}
+	if len(workers) == 0 {
+		buf.WriteString(",none")
+	}
+	s.logf("received %s, sending %s to all workers:%s", recv, signal, buf.String()[1:])
+
+	for _, w := range workers {
+		w.Signal(signal, workerStateShutdown)
+	}
+	s.Close()
+	s.logf("exiting")
 }
 
 // Close terminates all workers immediately.
