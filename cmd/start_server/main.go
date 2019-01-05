@@ -10,8 +10,9 @@ import (
 func main() {
 	s, err := starter.ParseArgs(os.Args)
 	if err != nil {
-		log.Println(err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
-	s.Run()
+	if err := s.Run(); err != nil {
+		log.Fatal(err)
+	}
 }

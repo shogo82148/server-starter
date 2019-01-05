@@ -19,6 +19,8 @@ import (
 	"time"
 )
 
+var errShutdown = errors.New("starter: now shutdown")
+
 // PortEnvName is the environment name for server_starter configures.
 const PortEnvName = "SERVER_STARTER_PORT"
 
@@ -73,35 +75,59 @@ type Starter struct {
 	cancel     context.CancelFunc
 	pidFile    *os.File
 
-	wg       sync.WaitGroup
-	mu       sync.RWMutex
-	chreload chan struct{}
-	chstart  chan struct{}
-	workers  map[*worker]struct{}
+	wg         sync.WaitGroup
+	mu         sync.RWMutex
+	chreload   chan struct{}
+	chshutdown chan struct{}
+	workers    map[*worker]struct{}
+	onceClose  sync.Once
 }
 
 // Run starts the specified command.
 func (s *Starter) Run() error {
-	go s.waitSignal()
-
-	if err := s.openPidFile(); err != nil {
-		return nil
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	s.cancel = cancel
+	defer s.Close()
+
+	// block reload during start up
+	s.getChReaload() <- struct{}{}
+
+	go s.waitSignal()
+
+	if err := s.openPidFile(); err != nil {
+		return err
+	}
+
 	if err := s.listen(); err != nil {
+		if err == errShutdown {
+			return nil
+		}
 		return err
 	}
 	w, err := s.startWorker()
 	if err != nil {
+		if err == errShutdown {
+			return nil
+		}
 		return err
 	}
 	w.Watch()
 
+	// enable reload
+	<-s.getChReaload()
+
 	s.wg.Wait()
 	return nil
+}
+
+func (s *Starter) getShutdownCh() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.chshutdown == nil {
+		s.chshutdown = make(chan struct{})
+	}
+	return s.chshutdown
 }
 
 func (s *Starter) openPidFile() error {
@@ -115,7 +141,7 @@ func (s *Starter) openPidFile() error {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return err
 	}
-	fmt.Fprintf(f, "%d\n", os.Getpid())
+	s.pidFile = f
 	return nil
 }
 
@@ -180,13 +206,22 @@ func (s *Starter) startWorker() (*worker, error) {
 RETRY:
 	w, err := s.tryToStartWorker()
 	if err != nil {
-		return nil, err
+		s.logf("failed to exec %s:%s", s.Command, err)
+		timer := time.NewTimer(s.interval())
+		select {
+		case <-s.getShutdownCh():
+			return nil, errShutdown
+		case <-timer.C:
+		}
+		goto RETRY
 	}
 	s.logf("starting new worker %d", w.Pid())
 
 	var state *os.ProcessState
 	timer := time.NewTimer(s.interval())
 	select {
+	case <-s.getShutdownCh():
+		return nil, errShutdown
 	case <-w.done:
 		state = w.cmd.ProcessState
 	case <-timer.C:
@@ -251,13 +286,7 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		return nil, err
 	}
 
-	s.mu.Lock()
-	if s.workers == nil {
-		s.workers = make(map[*worker]struct{})
-	}
-	s.workers[w] = struct{}{}
-	s.mu.Unlock()
-	s.updateStatus()
+	s.addWorker(w)
 	w.Wait()
 
 	return w, nil
@@ -305,6 +334,16 @@ func (w *worker) watch() {
 			case workerStateInit:
 				s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
 				go func() {
+					chreload := s.getChReaload()
+					select {
+					case chreload <- struct{}{}:
+						defer func() {
+							<-chreload
+						}()
+					default:
+						// already restarting, skip.
+						return
+					}
 					w, err := s.startWorker()
 					if err != nil {
 						return
@@ -344,11 +383,7 @@ func (w *worker) close() error {
 	}
 	w.cancel()
 	close(w.done)
-
-	w.starter.mu.Lock()
-	delete(w.starter.workers, w)
-	w.starter.mu.Unlock()
-	w.starter.updateStatus()
+	w.starter.removeWorker(w)
 	return nil
 }
 
@@ -416,6 +451,9 @@ func (s *Starter) Reload() error {
 RETRY:
 	w, err := s.startWorker()
 	if err != nil {
+		if err == errShutdown {
+			return nil
+		}
 		return err
 	}
 
@@ -441,6 +479,8 @@ RETRY:
 		s.logf("sleeping %d secs before killing old workers", int64(delay/time.Second))
 		timer := time.NewTimer(s.killOldDelay())
 		select {
+		case <-s.getShutdownCh():
+			return nil
 		case <-timer.C:
 		case <-w.done:
 			timer.Stop()
@@ -503,6 +543,8 @@ func (s *Starter) signalOnTERM() os.Signal {
 	return syscall.SIGTERM
 }
 
+/// Worker Pool Utilities
+
 func (s *Starter) listWorkers() []*worker {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -516,8 +558,55 @@ func (s *Starter) listWorkers() []*worker {
 	return workers
 }
 
+func (s *Starter) addWorker(w *worker) {
+	s.mu.Lock()
+	if s.workers == nil {
+		s.workers = make(map[*worker]struct{})
+	}
+	s.workers[w] = struct{}{}
+	s.updateStatusLocked()
+	s.mu.Unlock()
+}
+
+func (s *Starter) removeWorker(w *worker) {
+	s.mu.Lock()
+	delete(s.workers, w)
+	s.updateStatusLocked()
+	s.mu.Unlock()
+}
+
+// updateStatus writes the workers' status into StatusFile.
+func (s *Starter) updateStatusLocked() {
+	if s.StatusFile == "" {
+		return // nothing to do
+	}
+	workers := make([]*worker, 0, len(s.workers))
+	for w := range s.workers {
+		workers = append(workers, w)
+	}
+
+	sort.Slice(workers, func(i, j int) bool {
+		return workers[i].generation < workers[j].generation
+	})
+
+	var buf bytes.Buffer
+	for _, w := range workers {
+		fmt.Fprintf(&buf, "%d:%d\n", w.generation, w.Pid())
+	}
+	tmp := fmt.Sprintf("%s.%d", s.StatusFile, os.Getegid())
+	if err := ioutil.WriteFile(tmp, buf.Bytes(), 0666); err != nil {
+		s.logf("failed to create temporary file:%s:%s", tmp, err)
+		return
+	}
+	if err := os.Rename(tmp, s.StatusFile); err != nil {
+		s.logf("failed to rename %s to %s:%s", tmp, s.StatusFile, err)
+		return
+	}
+}
+
 // Shutdown terminates all workers.
 func (s *Starter) Shutdown(ctx context.Context) error {
+	close(s.getShutdownCh())
 	workers := s.listWorkers()
 	for _, w := range workers {
 		w.Signal(s.signalOnTERM(), workerStateShutdown)
@@ -533,6 +622,7 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 }
 
 func (s *Starter) shutdownBySignal(recv os.Signal) {
+	close(s.getShutdownCh())
 	signal := os.Signal(syscall.SIGTERM)
 	if recv == syscall.SIGTERM {
 		signal = s.signalOnTERM()
@@ -557,6 +647,11 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 
 // Close terminates all workers immediately.
 func (s *Starter) Close() error {
+	s.onceClose.Do(s.close)
+	return nil
+}
+
+func (s *Starter) close() {
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -572,32 +667,6 @@ func (s *Starter) Close() error {
 			s.logf("failed to unlink file:%s:%s", f.Name(), err)
 		}
 		f.Close()
-	}
-	return nil
-}
-
-// updateStatus writes the workers' status into StatusFile.
-func (s *Starter) updateStatus() {
-	if s.StatusFile == "" {
-		return // nothing to do
-	}
-	workers := s.listWorkers()
-	sort.Slice(workers, func(i, j int) bool {
-		return workers[i].generation < workers[j].generation
-	})
-
-	var buf bytes.Buffer
-	for _, w := range workers {
-		fmt.Fprintf(&buf, "%d:%d\n", w.generation, w.Pid())
-	}
-	tmp := fmt.Sprintf("%s.%d", s.StatusFile, os.Getegid())
-	if err := ioutil.WriteFile(tmp, buf.Bytes(), 0666); err != nil {
-		s.logf("failed to create temporary file:%s:%s", tmp, err)
-		return
-	}
-	if err := os.Rename(tmp, s.StatusFile); err != nil {
-		s.logf("failed to rename %s to %s:%s", tmp, s.StatusFile, err)
-		return
 	}
 }
 
