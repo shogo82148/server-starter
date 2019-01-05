@@ -33,7 +33,7 @@ type Starter struct {
 	// Ports to bind to (addr:port or port, so it's a string)
 	Ports []string
 
-	// TODO:
+	// Paths at where to listen using unix socket.
 	Paths []string
 
 	Interval time.Duration
@@ -335,6 +335,7 @@ func (w *worker) close() error {
 func (s *Starter) listen() error {
 	var listeners []net.Listener
 	var lc net.ListenConfig
+
 	for _, port := range s.Ports {
 		if idx := strings.LastIndexByte(port, '='); idx >= 0 {
 			return errors.New("fd options are not supported")
@@ -345,11 +346,28 @@ func (s *Starter) listen() error {
 		}
 		l, err := lc.Listen(s.ctx, "tcp", port)
 		if err != nil {
-			// TODO: error handling.
+			s.logf("failed to listen to %s:%s", port, err)
 			return err
 		}
 		listeners = append(listeners, l)
 	}
+
+	for _, path := range s.Paths {
+		if stat, err := os.Lstat(path); err == nil && stat.Mode()&os.ModeSocket == os.ModeSocket {
+			s.logf("removing existing socket file:%s", path)
+			if err := os.Remove(path); err != nil {
+				s.logf("failed to remove existing socket file:%s:%s", path, err)
+			}
+		}
+		_ = os.Remove(path)
+		l, err := lc.Listen(s.ctx, "unix", path)
+		if err != nil {
+			s.logf("failed to listen to file %s:%s", path, err)
+			return err
+		}
+		listeners = append(listeners, l)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.listeners = listeners
@@ -521,6 +539,12 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 func (s *Starter) Close() error {
 	if s.cancel != nil {
 		s.cancel()
+	}
+	for _, l := range s.Listeners() {
+		l.Close()
+		if l, ok := l.(*net.UnixListener); ok {
+			os.Remove(l.Addr().String())
+		}
 	}
 	s.wg.Wait()
 	return nil

@@ -299,3 +299,60 @@ func Test_KillOldDeplay(t *testing.T) {
 		t.Errorf("want another, got %s", pid2)
 	}
 }
+
+func Test_Unix(t *testing.T) {
+	dir, err := ioutil.TempDir("", "server-starter-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %s", err)
+	}
+	defer os.RemoveAll(dir)
+
+	// build echod
+	binFile := filepath.Join(dir, "unix")
+	sockFile := filepath.Join(dir, "sock")
+	cmd := exec.Command("go", "build", "-o", binFile, "testdata/unix/main.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
+	}
+
+	statusFile := filepath.Join(dir, "status")
+	sd := &Starter{
+		Command:      binFile,
+		Paths:        []string{sockFile},
+		KillOldDelay: 3 * time.Second,
+		StatusFile:   statusFile,
+	}
+	defer sd.Close()
+	go func() {
+		if err := sd.Run(); err != nil {
+			t.Errorf("sd.Run() failed: %s", err)
+		}
+	}()
+
+	time.Sleep(500 * time.Millisecond) // wait for starting worker
+
+	conn, err := net.Dial("unix", sockFile)
+	if err != nil {
+		t.Errorf("fail to dial: %s", err)
+	}
+	if _, err := conn.Write([]byte("hello")); err != nil {
+		t.Errorf("fail to write: %s", err)
+	}
+	var buf [1024 * 1024]byte
+	n, err := conn.Read(buf[:])
+	if err != nil {
+		t.Errorf("fail to read: %s", err)
+	}
+	if string(buf[:n]) != "hello" {
+		t.Errorf("want hello, got %s", buf[:n])
+	}
+	conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sd.Shutdown(ctx)
+
+	if _, err := os.Lstat(sockFile); err == nil {
+		t.Errorf("want %s is removed, but exists", sockFile)
+	}
+}
