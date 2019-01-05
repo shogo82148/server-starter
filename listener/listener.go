@@ -132,9 +132,12 @@ func (l listenConfig) Listen() (net.Listener, error) {
 	return net.FileListener(os.NewFile(l.fd, l.addr))
 }
 
-func parseListenTargets(str string) (ListenConfigs, error) {
-	if str == "" {
+func parseListenTargets(str string, ok bool) (ListenConfigs, error) {
+	if !ok {
 		return nil, ErrNoListeningTarget
+	}
+	if str == "" {
+		return []ListenConfig{}, nil
 	}
 
 	rawspec := strings.Split(str, ";")
@@ -162,9 +165,11 @@ func parseListenTargets(str string) (ListenConfigs, error) {
 
 // PortsSpecification returns the value of SERVER_STARTER_PORT
 // environment variable.
-// If it is not set, return the empty string.
-func PortsSpecification() string {
-	return os.Getenv(PortEnvName)
+// If the process starts from the start_server command,
+// returns the port specification and the boolean is true.
+// Otherwise the returned value will be empty and the boolean will be false.
+func PortsSpecification() (string, bool) {
+	return os.LookupEnv(PortEnvName)
 }
 
 // Ports parses environment variable SERVER_STARTER_PORT

@@ -41,10 +41,14 @@ func TestPort(t *testing.T) {
 				},
 			},
 		},
+		{
+			in: "",
+			ll: []listenConfig{},
+		},
 	}
 
 	for i, tc := range caces {
-		ll, err := parseListenTargets(tc.in)
+		ll, err := parseListenTargets(tc.in, true)
 		if err != nil {
 			t.Error(err)
 			continue
@@ -68,7 +72,7 @@ func TestPort(t *testing.T) {
 		"0.0.0.0:80",     // missing fd
 	}
 	for i, tc := range errs {
-		ll, err := parseListenTargets(tc)
+		ll, err := parseListenTargets(tc, true)
 		if err == nil {
 			t.Errorf("#%d: want error, got nil", i)
 		}
@@ -79,7 +83,7 @@ func TestPort(t *testing.T) {
 }
 
 func TestPortNoEnv(t *testing.T) {
-	ports, err := parseListenTargets("")
+	ports, err := parseListenTargets("", false)
 	if err != ErrNoListeningTarget {
 		t.Error("Ports must return error if no env")
 	}
