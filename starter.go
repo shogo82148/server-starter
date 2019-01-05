@@ -19,6 +19,8 @@ import (
 	"time"
 )
 
+var errShutdown = errors.New("starter: now shutdown")
+
 // PortEnvName is the environment name for server_starter configures.
 const PortEnvName = "SERVER_STARTER_PORT"
 
@@ -73,30 +75,59 @@ type Starter struct {
 	cancel     context.CancelFunc
 	pidFile    *os.File
 
-	wg       sync.WaitGroup
-	mu       sync.RWMutex
-	chreload chan struct{}
-	chstart  chan struct{}
-	workers  map[*worker]struct{}
+	wg         sync.WaitGroup
+	mu         sync.RWMutex
+	chreload   chan struct{}
+	chshutdown chan struct{}
+	workers    map[*worker]struct{}
+	onceClose  sync.Once
 }
 
 // Run starts the specified command.
 func (s *Starter) Run() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx = ctx
+	s.cancel = cancel
+	defer s.Close()
+
+	// block reload during start up
+	s.getChReaload() <- struct{}{}
+
+	go s.waitSignal()
+
 	if err := s.openPidFile(); err != nil {
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	s.ctx = ctx
-	s.cancel = cancel
 	if err := s.listen(); err != nil {
+		if err == errShutdown {
+			return nil
+		}
 		return err
 	}
-	s.startWorker().Watch()
-	go s.waitSignal()
+	w, err := s.startWorker()
+	if err != nil {
+		if err == errShutdown {
+			return nil
+		}
+		return err
+	}
+	w.Watch()
+
+	// enable reload
+	<-s.getChReaload()
 
 	s.wg.Wait()
 	return nil
+}
+
+func (s *Starter) getShutdownCh() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.chshutdown == nil {
+		s.chshutdown = make(chan struct{})
+	}
+	return s.chshutdown
 }
 
 func (s *Starter) openPidFile() error {
@@ -110,7 +141,7 @@ func (s *Starter) openPidFile() error {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return err
 	}
-	fmt.Fprintf(f, "%d\n", os.Getpid())
+	s.pidFile = f
 	return nil
 }
 
@@ -171,12 +202,17 @@ type workerSignal struct {
 	state workerState
 }
 
-func (s *Starter) startWorker() *worker {
+func (s *Starter) startWorker() (*worker, error) {
 RETRY:
 	w, err := s.tryToStartWorker()
 	if err != nil {
 		s.logf("failed to exec %s:%s", s.Command, err)
-		time.Sleep(s.interval())
+		timer := time.NewTimer(s.interval())
+		select {
+		case <-s.getShutdownCh():
+			return nil, errShutdown
+		case <-timer.C:
+		}
 		goto RETRY
 	}
 	s.logf("starting new worker %d", w.Pid())
@@ -184,6 +220,8 @@ RETRY:
 	var state *os.ProcessState
 	timer := time.NewTimer(s.interval())
 	select {
+	case <-s.getShutdownCh():
+		return nil, errShutdown
 	case <-w.done:
 		state = w.cmd.ProcessState
 	case <-timer.C:
@@ -203,7 +241,7 @@ RETRY:
 	}
 	timer.Stop()
 
-	return w
+	return w, nil
 }
 
 func (s *Starter) tryToStartWorker() (*worker, error) {
@@ -296,7 +334,21 @@ func (w *worker) watch() {
 			case workerStateInit:
 				s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
 				go func() {
-					s.startWorker().Watch()
+					chreload := s.getChReaload()
+					select {
+					case chreload <- struct{}{}:
+						defer func() {
+							<-chreload
+						}()
+					default:
+						// already restarting, skip.
+						return
+					}
+					w, err := s.startWorker()
+					if err != nil {
+						return
+					}
+					w.Watch()
 				}()
 			case workerStateOld:
 				s.logf("old worker %d died, %s", w.Pid(), msg)
@@ -397,7 +449,13 @@ func (s *Starter) Reload() error {
 	}
 
 RETRY:
-	w := s.startWorker()
+	w, err := s.startWorker()
+	if err != nil {
+		if err == errShutdown {
+			return nil
+		}
+		return err
+	}
 
 	tmp := s.listWorkers()
 	workers := tmp[:0]
@@ -421,6 +479,8 @@ RETRY:
 		s.logf("sleeping %d secs before killing old workers", int64(delay/time.Second))
 		timer := time.NewTimer(s.killOldDelay())
 		select {
+		case <-s.getShutdownCh():
+			return nil
 		case <-timer.C:
 		case <-w.done:
 			timer.Stop()
@@ -546,6 +606,7 @@ func (s *Starter) updateStatusLocked() {
 
 // Shutdown terminates all workers.
 func (s *Starter) Shutdown(ctx context.Context) error {
+	close(s.getShutdownCh())
 	workers := s.listWorkers()
 	for _, w := range workers {
 		w.Signal(s.signalOnTERM(), workerStateShutdown)
@@ -561,6 +622,7 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 }
 
 func (s *Starter) shutdownBySignal(recv os.Signal) {
+	close(s.getShutdownCh())
 	signal := os.Signal(syscall.SIGTERM)
 	if recv == syscall.SIGTERM {
 		signal = s.signalOnTERM()
@@ -585,6 +647,11 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 
 // Close terminates all workers immediately.
 func (s *Starter) Close() error {
+	s.onceClose.Do(s.close)
+	return nil
+}
+
+func (s *Starter) close() {
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -601,7 +668,6 @@ func (s *Starter) Close() error {
 		}
 		f.Close()
 	}
-	return nil
 }
 
 func (s *Starter) logf(format string, args ...interface{}) {
