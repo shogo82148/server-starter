@@ -50,6 +50,9 @@ type Starter struct {
 	// if set, writes the status of the server process(es) to the file
 	StatusFile string
 
+	// if set, writes the process id of the start_server process to the file
+	PidFile string
+
 	// TODO:
 	EnvDir              string
 	EnableAutoRestart   bool
@@ -60,7 +63,6 @@ type Starter struct {
 	Version             bool
 	Daemonize           bool
 	LogFile             string
-	PidFile             string
 	Dir                 string
 
 	Logger *log.Logger
@@ -69,6 +71,7 @@ type Starter struct {
 	generation int
 	ctx        context.Context
 	cancel     context.CancelFunc
+	pidFile    *os.File
 
 	wg       sync.WaitGroup
 	mu       sync.RWMutex
@@ -80,6 +83,10 @@ type Starter struct {
 // Run starts the specified command.
 func (s *Starter) Run() error {
 	go s.waitSignal()
+
+	if err := s.openPidFile(); err != nil {
+		return nil
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
@@ -94,6 +101,21 @@ func (s *Starter) Run() error {
 	w.Watch()
 
 	s.wg.Wait()
+	return nil
+}
+
+func (s *Starter) openPidFile() error {
+	if s.PidFile == "" {
+		return nil
+	}
+	f, err := os.OpenFile(s.PidFile, os.O_EXCL|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	fmt.Fprintf(f, "%d\n", os.Getpid())
 	return nil
 }
 
@@ -547,6 +569,12 @@ func (s *Starter) Close() error {
 		}
 	}
 	s.wg.Wait()
+	if f := s.pidFile; f != nil {
+		if err := os.Remove(f.Name()); err != nil {
+			s.logf("failed to unlink file:%s:%s", f.Name(), err)
+		}
+		f.Close()
+	}
 	return nil
 }
 
