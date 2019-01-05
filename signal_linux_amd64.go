@@ -3,7 +3,7 @@ package starter
 import "syscall"
 
 func init() {
-	signalNameTable = append(signalNameTable, []signalName{
+	signalNameTable = append(signalNameTable,
 		// cat zerrors_linux_amd64.go | perl -nle 'print "signalName{syscall.SIG$1, \"$1\"}," if /SIG(\w+)\s*=\s*Signal/'
 		signalName{syscall.SIGABRT, "ABRT"},
 		signalName{syscall.SIGALRM, "ALRM"},
@@ -40,5 +40,5 @@ func init() {
 		signalName{syscall.SIGWINCH, "WINCH"},
 		signalName{syscall.SIGXCPU, "XCPU"},
 		signalName{syscall.SIGXFSZ, "XFSZ"},
-	})
+	)
 }
