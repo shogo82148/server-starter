@@ -99,9 +99,17 @@ func ParseArgs(args []string) (*Starter, error) {
 		case "--dir":
 			s.Dir = value
 		case "--signal-on-hup":
-			s.SignalOnHUP = nil // FIX ME
+			if signal := nameToSignal(value); signal != nil {
+				s.SignalOnHUP = signal
+			} else {
+				errs = append(errs, fmt.Errorf("unknown signal name for --signal-on-hup: %s", value))
+			}
 		case "--signal-on-term":
-			s.SignalOnTERM = nil // FIX ME
+			if signal := nameToSignal(value); signal != nil {
+				s.SignalOnTERM = signal
+			} else {
+				errs = append(errs, fmt.Errorf("unknown signal name for --signal-on-term: %s", value))
+			}
 		case "--backlog":
 			errs = append(errs, errors.New("--backlog is not supported"))
 		case "--envdir":

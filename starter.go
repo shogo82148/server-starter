@@ -261,7 +261,7 @@ func (w *worker) watch() {
 			state = sig.state
 			err := w.cmd.Process.Signal(sig.signal)
 			if err != nil {
-				s.logf("failed to send signal %s to %d", sig.signal, w.Pid())
+				s.logf("failed to send signal %s to %d", signalToName(sig.signal), w.Pid())
 			}
 		case <-w.ctx.Done():
 			var msg string
@@ -397,7 +397,7 @@ RETRY:
 		pids = b.String()
 		pids = pids[:len(pids)-1] // remove last ','
 	}
-	s.logf("new worker is now running, sending SIGTERM to old workers: %s", pids)
+	s.logf("new worker is now running, sending %s to old workers: %s", signalToName(s.signalOnHUP()), pids)
 
 	if delay := s.killOldDelay(); delay > 0 {
 		s.logf("sleeping %d secs before killing old workers", int64(delay/time.Second))
@@ -508,7 +508,7 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 	if len(workers) == 0 {
 		buf.WriteString(",none")
 	}
-	s.logf("received %s, sending %s to all workers:%s", recv, signal, buf.String()[1:])
+	s.logf("received %s, sending %s to all workers:%s", recv, signalToName(signal), buf.String()[1:])
 
 	for _, w := range workers {
 		w.Signal(signal, workerStateShutdown)
