@@ -141,9 +141,14 @@ func (s *Starter) waitSignal() {
 }
 
 type worker struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	cmd        *exec.Cmd
+	ctx    context.Context
+	cancel context.CancelFunc
+	cmd    *exec.Cmd
+
+	// done is closed if cmd.Wait has finished.
+	// after closed, cmd.ProcessState is available.
+	done chan struct{}
+
 	generation int
 	starter    *Starter
 	chsig      chan workerSignal
@@ -179,14 +184,16 @@ RETRY:
 	}
 	s.logf("starting new worker %d", w.Pid())
 
+	var state *os.ProcessState
 	timer := time.NewTimer(s.interval())
 	select {
-	case <-w.ctx.Done():
+	case <-w.done:
+		state = w.cmd.ProcessState
 	case <-timer.C:
 		timer.Reset(0)
 	}
 
-	if state := w.ProcessState(); state != nil {
+	if state != nil {
 		var msg string
 		if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
 			msg = "exit status: " + strconv.Itoa(s.ExitStatus())
@@ -234,6 +241,7 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		ctx:        ctx,
 		cancel:     cancel,
 		cmd:        cmd,
+		done:       make(chan struct{}),
 		generation: s.generation,
 		starter:    s,
 		chsig:      make(chan workerSignal),
@@ -285,7 +293,7 @@ func (w *worker) watch() {
 			if err != nil {
 				s.logf("failed to send signal %s to %d", signalToName(sig.signal), w.Pid())
 			}
-		case <-w.ctx.Done():
+		case <-w.done:
 			var msg string
 			st := w.cmd.ProcessState
 			if s, ok := st.Sys().(syscall.WaitStatus); ok && s.Exited() {
@@ -330,22 +338,12 @@ func (w *worker) Signal(sig os.Signal, state workerState) {
 	}
 }
 
-// ProcessState contains information about an exited process.
-// Return nil while the worker is running.
-func (w *worker) ProcessState() *os.ProcessState {
-	select {
-	case <-w.ctx.Done():
-	default:
-		return nil
-	}
-	return w.cmd.ProcessState
-}
-
 func (w *worker) close() error {
 	for _, f := range w.cmd.ExtraFiles {
 		f.Close()
 	}
 	w.cancel()
+	close(w.done)
 
 	w.starter.mu.Lock()
 	delete(w.starter.workers, w)
@@ -444,10 +442,10 @@ RETRY:
 		timer := time.NewTimer(s.killOldDelay())
 		select {
 		case <-timer.C:
-		case <-w.ctx.Done():
+		case <-w.done:
 			timer.Stop()
 			// the new worker dies during sleep, restarting.
-			state := w.ProcessState()
+			state := w.cmd.ProcessState
 			var msg string
 			if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
 				msg = "exit status: " + strconv.Itoa(s.ExitStatus())
@@ -526,7 +524,7 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 	}
 	for _, w := range workers {
 		select {
-		case <-w.ctx.Done():
+		case <-w.done:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
