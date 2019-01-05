@@ -251,13 +251,7 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		return nil, err
 	}
 
-	s.mu.Lock()
-	if s.workers == nil {
-		s.workers = make(map[*worker]struct{})
-	}
-	s.workers[w] = struct{}{}
-	s.mu.Unlock()
-	s.updateStatus()
+	s.addWorker(w)
 	w.Wait()
 
 	return w, nil
@@ -344,11 +338,7 @@ func (w *worker) close() error {
 	}
 	w.cancel()
 	close(w.done)
-
-	w.starter.mu.Lock()
-	delete(w.starter.workers, w)
-	w.starter.mu.Unlock()
-	w.starter.updateStatus()
+	w.starter.removeWorker(w)
 	return nil
 }
 
@@ -503,6 +493,8 @@ func (s *Starter) signalOnTERM() os.Signal {
 	return syscall.SIGTERM
 }
 
+/// Worker Pool Utilities
+
 func (s *Starter) listWorkers() []*worker {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -514,6 +506,52 @@ func (s *Starter) listWorkers() []*worker {
 		return workers[i].Pid() < workers[i].Pid()
 	})
 	return workers
+}
+
+func (s *Starter) addWorker(w *worker) {
+	s.mu.Lock()
+	if s.workers == nil {
+		s.workers = make(map[*worker]struct{})
+	}
+	s.workers[w] = struct{}{}
+	s.updateStatusLocked()
+	s.mu.Unlock()
+}
+
+func (s *Starter) removeWorker(w *worker) {
+	s.mu.Lock()
+	delete(s.workers, w)
+	s.updateStatusLocked()
+	s.mu.Unlock()
+}
+
+// updateStatus writes the workers' status into StatusFile.
+func (s *Starter) updateStatusLocked() {
+	if s.StatusFile == "" {
+		return // nothing to do
+	}
+	workers := make([]*worker, 0, len(s.workers))
+	for w := range s.workers {
+		workers = append(workers, w)
+	}
+
+	sort.Slice(workers, func(i, j int) bool {
+		return workers[i].generation < workers[j].generation
+	})
+
+	var buf bytes.Buffer
+	for _, w := range workers {
+		fmt.Fprintf(&buf, "%d:%d\n", w.generation, w.Pid())
+	}
+	tmp := fmt.Sprintf("%s.%d", s.StatusFile, os.Getegid())
+	if err := ioutil.WriteFile(tmp, buf.Bytes(), 0666); err != nil {
+		s.logf("failed to create temporary file:%s:%s", tmp, err)
+		return
+	}
+	if err := os.Rename(tmp, s.StatusFile); err != nil {
+		s.logf("failed to rename %s to %s:%s", tmp, s.StatusFile, err)
+		return
+	}
 }
 
 // Shutdown terminates all workers.
@@ -574,31 +612,6 @@ func (s *Starter) Close() error {
 		f.Close()
 	}
 	return nil
-}
-
-// updateStatus writes the workers' status into StatusFile.
-func (s *Starter) updateStatus() {
-	if s.StatusFile == "" {
-		return // nothing to do
-	}
-	workers := s.listWorkers()
-	sort.Slice(workers, func(i, j int) bool {
-		return workers[i].generation < workers[j].generation
-	})
-
-	var buf bytes.Buffer
-	for _, w := range workers {
-		fmt.Fprintf(&buf, "%d:%d\n", w.generation, w.Pid())
-	}
-	tmp := fmt.Sprintf("%s.%d", s.StatusFile, os.Getegid())
-	if err := ioutil.WriteFile(tmp, buf.Bytes(), 0666); err != nil {
-		s.logf("failed to create temporary file:%s:%s", tmp, err)
-		return
-	}
-	if err := os.Rename(tmp, s.StatusFile); err != nil {
-		s.logf("failed to rename %s to %s:%s", tmp, s.StatusFile, err)
-		return
-	}
 }
 
 func (s *Starter) logf(format string, args ...interface{}) {
