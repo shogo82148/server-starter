@@ -64,8 +64,10 @@ type Starter struct {
 	// automatic restart interval (default 360). It is used with EnableAutoRestart option.
 	AutoRestartInterval time.Duration
 
+	// directory that contains environment variables to the server processes.
+	EnvDir string
+
 	// TODO:
-	EnvDir    string
 	Restart   bool
 	Stop      bool
 	Help      bool
@@ -308,13 +310,14 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 
 	s.generation++
 	ctx, cancel := context.WithCancel(s.ctx)
-	env := os.Environ()
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.ExtraFiles = files
+	env := os.Environ()
 	env = append(env, fmt.Sprintf("%s=%s", PortEnvName, strings.Join(ports, ";")))
 	env = append(env, fmt.Sprintf("%s=%d", GenerationEnvName, s.generation))
+	env = append(env, loadEnv(s.EnvDir)...)
 	cmd.Env = env
 	cmd.Dir = s.Dir
 	w := &worker{
