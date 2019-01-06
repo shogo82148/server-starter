@@ -28,6 +28,11 @@ func main() {
 }
 
 func handle(conn net.Conn) {
-	env := os.Getenv("FOO")
-	conn.Write([]byte(env))
+	env, ok := os.LookupEnv("FOO")
+	if ok {
+		conn.Write([]byte("FOO=" + env))
+	} else {
+		conn.Write([]byte("not found!"))
+	}
+	conn.Close()
 }

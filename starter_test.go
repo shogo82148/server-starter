@@ -586,8 +586,8 @@ func Test_EnvDir(t *testing.T) {
 
 	// ... but the worker returns the old environment value before reload.
 	v := getEnv()
-	if v != " old env " {
-		t.Errorf("want old env, got %s", v)
+	if v != "FOO= old env " {
+		t.Errorf("want FOO= old env, got %s", v)
 	}
 
 	// after reload, we can get the new environment value
@@ -595,8 +595,8 @@ func Test_EnvDir(t *testing.T) {
 	go sd.Reload()
 	time.Sleep(2 * time.Second)
 	v = getEnv()
-	if v != "new env" {
-		t.Errorf("want new env, got %s", v)
+	if v != "FOO=new env" {
+		t.Errorf("want FOO=new env, got %s", v)
 	}
 
 	if err := os.Remove(envfile); err != nil {
@@ -605,7 +605,7 @@ func Test_EnvDir(t *testing.T) {
 	go sd.Reload()
 	time.Sleep(2 * time.Second)
 	v = getEnv()
-	if v != "" {
-		t.Errorf("want \"\", got %s", v)
+	if v != "not found!" {
+		t.Errorf("want not found!, got %s", v)
 	}
 }
