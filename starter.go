@@ -889,6 +889,66 @@ func (s *Starter) restart() error {
 	if s.PidFile == "" || s.StatusFile == "" {
 		return errors.New("--restart option requires --pid-file and --status-file to be set as well")
 	}
+
+	// get pid
+	buf, err := ioutil.ReadFile(s.PidFile)
+	if err != nil {
+		return err
+	}
+	pid, err := strconv.Atoi(string(bytes.TrimSpace(buf)))
+	if err != nil {
+		return err
+	}
+
+	getGenerations := func() ([]int, error) {
+		buf, err := ioutil.ReadFile(s.StatusFile)
+		if err != nil {
+			return nil, err
+		}
+		gens := []int{}
+		for _, line := range bytes.Split(buf, []byte{'\n'}) {
+			idx := bytes.IndexByte(line, ':')
+			if idx < 0 {
+				continue
+			}
+			g, err := strconv.Atoi(string(line[:idx]))
+			if err != nil {
+				continue
+			}
+			gens = append(gens, g)
+		}
+		sort.Ints(gens)
+		return gens, nil
+	}
+	var waitFor int
+	if gens, err := getGenerations(); err != nil {
+		return err
+	} else if len(gens) == 0 {
+		return errors.New("no active process found in the status file")
+	} else {
+		waitFor = gens[len(gens)-1] + 1
+	}
+
+	// send HUP
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	if err := p.Signal(syscall.SIGHUP); err != nil {
+		return err
+	}
+
+	// wait for the generation
+	for {
+		gens, err := getGenerations()
+		if err != nil {
+			return err
+		}
+		if len(gens) == 1 && gens[0] == waitFor {
+			break
+		}
+		time.Sleep(time.Second)
+	}
 	return nil
 }
 
