@@ -76,12 +76,16 @@ type Starter struct {
 	// deamonizes the server. (UNIMPLEMENTED)
 	Daemonize bool
 
+	// if set, redirects STDOUT and STDERR to given file or command
+	LogFile string
+
 	// TODO:
 	Restart bool
 	Stop    bool
-	LogFile string
 
-	Logger *log.Logger
+	Logger   *log.Logger
+	mylogger *log.Logger
+	logfile  *os.File
 
 	listeners  []net.Listener
 	generation int
@@ -113,6 +117,9 @@ func (s *Starter) Run() error {
 	}
 	if s.Command == "" {
 		return errors.New("command is required")
+	}
+	if err := s.openLogFile(); err != nil {
+		return err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -175,6 +182,19 @@ func (s *Starter) openPidFile() error {
 		return err
 	}
 	s.pidFile = f
+	return nil
+}
+
+func (s *Starter) openLogFile() error {
+	if s.LogFile == "" {
+		return nil
+	}
+	f, err := os.OpenFile(s.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	s.mylogger = log.New(f, "", 0)
+	s.logfile = f
 	return nil
 }
 
@@ -332,8 +352,13 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	s.generation++
 	ctx, cancel := context.WithCancel(s.ctx)
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	if s.logfile != nil {
+		cmd.Stdout = s.logfile
+		cmd.Stderr = s.logfile
+	} else {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
 	cmd.ExtraFiles = files
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("%s=%s", PortEnvName, strings.Join(ports, ";")))
@@ -766,7 +791,9 @@ func (s *Starter) close() {
 }
 
 func (s *Starter) logf(format string, args ...interface{}) {
-	if s.Logger != nil {
+	if s.mylogger != nil {
+		s.mylogger.Printf(format, args...)
+	} else if s.Logger != nil {
 		s.Logger.Printf(format, args...)
 	} else {
 		log.Printf(format, args...)
