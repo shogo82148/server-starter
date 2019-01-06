@@ -182,6 +182,7 @@ func (s *Starter) openPidFile() error {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return err
 	}
+	fmt.Fprintf(f, "%d", os.Getpid())
 	s.pidFile = f
 	return nil
 }
