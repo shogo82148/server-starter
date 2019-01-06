@@ -886,9 +886,43 @@ func (s *Starter) logf(format string, args ...interface{}) {
 }
 
 func (s *Starter) restart() error {
+	if s.PidFile == "" || s.StatusFile == "" {
+		return errors.New("--restart option requires --pid-file and --status-file to be set as well")
+	}
 	return nil
 }
 
 func (s *Starter) stop() error {
+	if s.PidFile == "" {
+		return errors.New("--stop option requires --pid-file to be set as well")
+	}
+	f, err := os.OpenFile(s.PidFile, os.O_RDONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	buf, err := ioutil.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	pid, err := strconv.Atoi(string(bytes.TrimSpace(buf)))
+	if err != nil {
+		return err
+	}
+
+	s.logf("stop_server (pid:%d) stopping now (pid:%d)...", os.Getpid(), pid)
+
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	if err := p.Signal(syscall.SIGTERM); err != nil {
+		return err
+	}
+
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
 	return nil
 }
