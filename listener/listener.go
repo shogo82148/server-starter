@@ -28,6 +28,9 @@ type ListenConfig interface {
 	// Listen creates a new Listener
 	Listen() (net.Listener, error)
 
+	// Addr returns the address.
+	Addr() string
+
 	// return a string compatible with SERVER_STARTER_PORT
 	String() string
 }
@@ -58,6 +61,7 @@ func (ll ListenConfigs) Listen(ctx context.Context, network, address string) (ne
 	var addrlist []string
 	switch network {
 	case "tcp", "tcp4", "tcp6":
+		var ips []net.IPAddr
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
 			return nil, err
@@ -68,31 +72,71 @@ func (ll ListenConfigs) Listen(ctx context.Context, network, address string) (ne
 		}
 		port = strconv.Itoa(portnum)
 
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if host != "" {
+			ips, err = net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			if network == "tcp" || network == "tcp4" {
+				ips = append(ips, net.IPAddr{IP: net.IPv4zero})
+			}
+			if network == "tcp" || network == "tcp6" {
+				ips = append(ips, net.IPAddr{IP: net.IPv6unspecified})
+			}
+		}
+		for _, ip := range ips {
+			if network == "tcp4" && ip.IP.To4() == nil {
+				continue
+			}
+			if network == "tcp6" && ip.IP.To4() != nil {
+				continue
+			}
+			addrlist = append(addrlist, net.JoinHostPort(ip.String(), port))
+		}
+	case "unix":
+		addrlist = []string{address}
+		stat1, err := os.Stat(address)
 		if err != nil {
 			return nil, err
 		}
-		// if the machine has halfway configured
-		// IPv6 such that it can bind on "::" (IPv6unspecified)
-		// but not connect back to that same address, fall
-		// back to dialing 0.0.0.0.
-		if len(ips) == 1 && ips[0].IP.Equal(net.IPv6unspecified) {
-			ips = append(ips, net.IPAddr{IP: net.IPv4zero})
+		for _, l := range ll {
+			stat2, err := os.Stat(l.Addr())
+			if err != nil {
+				continue
+			}
+			if os.SameFile(stat1, stat2) {
+				ln, err := l.Listen()
+				if err != nil {
+					continue
+				}
+				if _, ok := ln.(*net.UnixListener); !ok {
+					ln.Close()
+					continue
+				}
+				return ln, nil
+			}
 		}
-		for _, ip := range ips {
-			addrlist = append(addrlist, net.JoinHostPort(ip.String(), port))
-		}
-	case "unix", "unixpacket":
-		addrlist = []string{address}
+		return nil, fmt.Errorf("listener: address %s is not being bound to the server", address)
 	default:
 		return nil, net.UnknownNetworkError(network)
 	}
 
 	for _, l := range ll {
+		a := l.Addr()
 		for _, addr := range addrlist {
-			if l.String() == addr {
-				return l.Listen()
+			if addr != a {
+				continue
 			}
+			ln, err := l.Listen()
+			if err != nil {
+				continue
+			}
+			if _, ok := ln.(*net.TCPListener); !ok {
+				ln.Close()
+				continue
+			}
+			return ln, nil
 		}
 	}
 
@@ -120,6 +164,10 @@ type listenConfig struct {
 	fd   uintptr
 }
 
+func (l listenConfig) Addr() string {
+	return l.addr
+}
+
 func (l listenConfig) String() string {
 	return fmt.Sprintf("%s=%d", l.addr, l.fd)
 }
@@ -132,9 +180,12 @@ func (l listenConfig) Listen() (net.Listener, error) {
 	return net.FileListener(os.NewFile(l.fd, l.addr))
 }
 
-func parseListenTargets(str string) (ListenConfigs, error) {
-	if str == "" {
+func parseListenTargets(str string, ok bool) (ListenConfigs, error) {
+	if !ok {
 		return nil, ErrNoListeningTarget
+	}
+	if str == "" {
+		return []ListenConfig{}, nil
 	}
 
 	rawspec := strings.Split(str, ";")
@@ -162,9 +213,11 @@ func parseListenTargets(str string) (ListenConfigs, error) {
 
 // PortsSpecification returns the value of SERVER_STARTER_PORT
 // environment variable.
-// If it is not set, return the empty string.
-func PortsSpecification() string {
-	return os.Getenv(PortEnvName)
+// If the process starts from the start_server command,
+// returns the port specification and the boolean is true.
+// Otherwise the returned value will be empty and the boolean will be false.
+func PortsSpecification() (string, bool) {
+	return os.LookupEnv(PortEnvName)
 }
 
 // Ports parses environment variable SERVER_STARTER_PORT
