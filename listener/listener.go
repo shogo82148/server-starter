@@ -105,12 +105,13 @@ func (ll ListenConfigs) Listen(ctx context.Context, network, address string) (ne
 			if err != nil {
 				continue
 			}
-			if stat2.Mode()&os.ModeSocket != os.ModeSocket {
-				continue
-			}
 			if os.SameFile(stat1, stat2) {
 				ln, err := l.Listen()
 				if err != nil {
+					continue
+				}
+				if _, ok := ln.(*net.UnixListener); !ok {
+					ln.Close()
 					continue
 				}
 				return ln, nil
