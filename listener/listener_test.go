@@ -97,7 +97,8 @@ func TestListenConfigs(t *testing.T) {
 	t.Run("ipv6", func(t *testing.T) {
 		l, err := net.Listen("tcp6", ":0")
 		if err != nil {
-			t.Fatal(err)
+			t.Skip("IPv6 is not supported?")
+			return
 		}
 		defer l.Close()
 
@@ -128,7 +129,8 @@ func TestListenConfigs(t *testing.T) {
 	t.Run("ipv6-loopback", func(t *testing.T) {
 		l, err := net.Listen("tcp6", "[::1]:0")
 		if err != nil {
-			t.Fatal(err)
+			t.Skip("IPv6 is not supported?")
+			return
 		}
 		defer l.Close()
 
