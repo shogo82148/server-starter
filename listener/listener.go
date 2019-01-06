@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+//type ListenConfig
+
 // PortEnvName is the environment name for server_starter configures.
 // copied from the starter package.
 const PortEnvName = "SERVER_STARTER_PORT"
@@ -159,24 +161,24 @@ func (ll ListenSpecs) ListenAll(ctx context.Context) ([]net.Listener, error) {
 	return ret, nil
 }
 
-type listenConfig struct {
+type listenSpec struct {
 	addr string
 	fd   uintptr
 }
 
-func (l listenConfig) Addr() string {
+func (l listenSpec) Addr() string {
 	return l.addr
 }
 
-func (l listenConfig) String() string {
+func (l listenSpec) String() string {
 	return fmt.Sprintf("%s=%d", l.addr, l.fd)
 }
 
-func (l listenConfig) Fd() uintptr {
+func (l listenSpec) Fd() uintptr {
 	return l.fd
 }
 
-func (l listenConfig) Listen() (net.Listener, error) {
+func (l listenSpec) Listen() (net.Listener, error) {
 	return net.FileListener(os.NewFile(l.fd, l.addr))
 }
 
@@ -202,7 +204,7 @@ func parseListenTargets(str string, ok bool) (ListenSpecs, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse '%s' as listen target: %s", pairString, err)
 		}
-		ret[i] = listenConfig{
+		ret[i] = listenSpec{
 			addr: addr,
 			fd:   uintptr(fd),
 		}

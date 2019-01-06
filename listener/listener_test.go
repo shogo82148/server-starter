@@ -48,7 +48,7 @@ func TestListenConfigs(t *testing.T) {
 		_, port, _ := net.SplitHostPort(l.Addr().String())
 
 		ll := ListenSpecs{
-			listenConfig{
+			listenSpec{
 				addr: l.Addr().String(),
 				fd:   f.Fd(),
 			},
@@ -79,7 +79,7 @@ func TestListenConfigs(t *testing.T) {
 		_, port, _ := net.SplitHostPort(l.Addr().String())
 
 		ll := ListenSpecs{
-			listenConfig{
+			listenSpec{
 				addr: l.Addr().String(),
 				fd:   f.Fd(),
 			},
@@ -112,7 +112,7 @@ func TestListenConfigs(t *testing.T) {
 		_, port, _ := net.SplitHostPort(l.Addr().String())
 
 		ll := ListenSpecs{
-			listenConfig{
+			listenSpec{
 				addr: l.Addr().String(),
 				fd:   f.Fd(),
 			},
@@ -144,7 +144,7 @@ func TestListenConfigs(t *testing.T) {
 		_, port, _ := net.SplitHostPort(l.Addr().String())
 
 		ll := ListenSpecs{
-			listenConfig{
+			listenSpec{
 				addr: l.Addr().String(),
 				fd:   f.Fd(),
 			},
@@ -189,7 +189,7 @@ func TestListenConfigs(t *testing.T) {
 		defer cancel()
 
 		ll := ListenSpecs{
-			listenConfig{
+			listenSpec{
 				addr: "127.0.0.1:8000",
 				fd:   f.Fd(),
 			},
@@ -204,11 +204,11 @@ func TestListenConfigs(t *testing.T) {
 func TestPort(t *testing.T) {
 	caces := []struct {
 		in string
-		ll []listenConfig
+		ll []listenSpec
 	}{
 		{
 			in: "0.0.0.0:80=3",
-			ll: []listenConfig{
+			ll: []listenSpec{
 				{
 					addr: "0.0.0.0:80",
 					fd:   3,
@@ -217,7 +217,7 @@ func TestPort(t *testing.T) {
 		},
 		{
 			in: "0.0.0.0:80=3;/tmp/foo.sock=4",
-			ll: []listenConfig{
+			ll: []listenSpec{
 				{
 					addr: "0.0.0.0:80",
 					fd:   3,
@@ -230,7 +230,7 @@ func TestPort(t *testing.T) {
 		},
 		{
 			in: "50908=4",
-			ll: []listenConfig{
+			ll: []listenSpec{
 				{
 					addr: "50908",
 					fd:   4,
@@ -239,7 +239,7 @@ func TestPort(t *testing.T) {
 		},
 		{
 			in: "",
-			ll: []listenConfig{},
+			ll: []listenSpec{},
 		},
 	}
 
@@ -253,7 +253,7 @@ func TestPort(t *testing.T) {
 			t.Errorf("#%d: want %d, got %d", i, len(tc.ll), len(ll))
 		}
 		for i, l := range ll {
-			l := l.(listenConfig)
+			l := l.(listenSpec)
 			if !reflect.DeepEqual(l, tc.ll[i]) {
 				t.Errorf("#%d, want %#v, got %#v", i, tc.ll[i], l)
 			}
