@@ -402,7 +402,9 @@ func (w *worker) watch() {
 			switch state {
 			case workerStateInit:
 				s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
+				w.starter.wg.Add(1)
 				go func() {
+					defer s.wg.Done()
 					chreload := s.getChReaload()
 					select {
 					case chreload <- struct{}{}:
