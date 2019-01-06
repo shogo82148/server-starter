@@ -11,6 +11,11 @@ import (
 	"strings"
 )
 
+// ListenConfig is a generator of net.Listener.
+type ListenConfig interface {
+	Listen(ctx context.Context, network, address string) (net.Listener, error)
+}
+
 // PortEnvName is the environment name for server_starter configures.
 // copied from the starter package.
 const PortEnvName = "SERVER_STARTER_PORT"
@@ -19,9 +24,9 @@ const PortEnvName = "SERVER_STARTER_PORT"
 // when the process is not started using server_starter.
 var ErrNoListeningTarget = errors.New("listener: no listening target")
 
-// ListenConfig is the interface for things that listen on file descriptors
+// ListenSpec is the interface for things that listen on file descriptors
 // specified by Start::Server / server_starter
-type ListenConfig interface {
+type ListenSpec interface {
 	// Fd returns the underlying file descriptor
 	Fd() uintptr
 
@@ -35,13 +40,13 @@ type ListenConfig interface {
 	String() string
 }
 
-// ListenConfigs holds a list of ListenConfig. This is here just for convenience
+// ListenSpecs holds a list of ListenConfig. This is here just for convenience
 // so that you can do
 //	list.String()
 // to get a string compatible with SERVER_STARTER_PORT
-type ListenConfigs []ListenConfig
+type ListenSpecs []ListenSpec
 
-func (ll ListenConfigs) String() string {
+func (ll ListenSpecs) String() string {
 	if len(ll) == 0 {
 		return ""
 	}
@@ -57,7 +62,7 @@ func (ll ListenConfigs) String() string {
 
 // Listen announces on the local network address.
 // The network must be "tcp", "tcp4", "tcp6", "unix" or "unixpacket".
-func (ll ListenConfigs) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+func (ll ListenSpecs) Listen(ctx context.Context, network, address string) (net.Listener, error) {
 	var addrlist []string
 	switch network {
 	case "tcp", "tcp4", "tcp6":
@@ -144,7 +149,7 @@ func (ll ListenConfigs) Listen(ctx context.Context, network, address string) (ne
 }
 
 // ListenAll announces on the local network address.
-func (ll ListenConfigs) ListenAll(ctx context.Context) ([]net.Listener, error) {
+func (ll ListenSpecs) ListenAll(ctx context.Context) ([]net.Listener, error) {
 	ret := make([]net.Listener, 0, len(ll))
 	for _, lc := range ll {
 		l, err := lc.Listen()
@@ -159,37 +164,37 @@ func (ll ListenConfigs) ListenAll(ctx context.Context) ([]net.Listener, error) {
 	return ret, nil
 }
 
-type listenConfig struct {
+type listenSpec struct {
 	addr string
 	fd   uintptr
 }
 
-func (l listenConfig) Addr() string {
+func (l listenSpec) Addr() string {
 	return l.addr
 }
 
-func (l listenConfig) String() string {
+func (l listenSpec) String() string {
 	return fmt.Sprintf("%s=%d", l.addr, l.fd)
 }
 
-func (l listenConfig) Fd() uintptr {
+func (l listenSpec) Fd() uintptr {
 	return l.fd
 }
 
-func (l listenConfig) Listen() (net.Listener, error) {
+func (l listenSpec) Listen() (net.Listener, error) {
 	return net.FileListener(os.NewFile(l.fd, l.addr))
 }
 
-func parseListenTargets(str string, ok bool) (ListenConfigs, error) {
+func parseListenTargets(str string, ok bool) (ListenSpecs, error) {
 	if !ok {
 		return nil, ErrNoListeningTarget
 	}
 	if str == "" {
-		return []ListenConfig{}, nil
+		return []ListenSpec{}, nil
 	}
 
 	rawspec := strings.Split(str, ";")
-	ret := make([]ListenConfig, len(rawspec))
+	ret := make([]ListenSpec, len(rawspec))
 
 	for i, pairString := range rawspec {
 		pair := strings.SplitN(pairString, "=", 2)
@@ -202,7 +207,7 @@ func parseListenTargets(str string, ok bool) (ListenConfigs, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse '%s' as listen target: %s", pairString, err)
 		}
-		ret[i] = listenConfig{
+		ret[i] = listenSpec{
 			addr: addr,
 			fd:   uintptr(fd),
 		}
@@ -220,8 +225,10 @@ func PortsSpecification() (string, bool) {
 	return os.LookupEnv(PortEnvName)
 }
 
-// Ports parses environment variable SERVER_STARTER_PORT
-func Ports() (ListenConfigs, error) {
+// Ports parses the environment variable SERVER_STARTER_PORT,
+// and return ListenSpecs.
+// If SERVER_STARTER_PORT is not defined, return ErrNoListeningTarget.
+func Ports() (ListenSpecs, error) {
 	ll, err := parseListenTargets(PortsSpecification())
 	if err != nil {
 		return nil, err
@@ -234,4 +241,28 @@ func Ports() (ListenConfigs, error) {
 	})
 
 	return ll, nil
+}
+
+// PortsFallback returns the same result as Ports, if SERVER_STARTER_PORT is defined.
+// Otherwise returns net.ListenConfig instead of ListenSpecs.
+// Regardless of whether the process starts from the start_server command or not,
+// you can call Listen method.
+//
+//  lc, err := listener.PortsFallback()
+//  l, err := lc.Listen(ctx, "tcp", ":8080")
+func PortsFallback() (ListenConfig, error) {
+	ll, err := parseListenTargets(PortsSpecification())
+	if err == nil {
+		// emulate Perl's hash randomization
+		// to eeproduce the original behavior of https://metacpan.org/pod/Server::Starter#server_ports
+		rand.Shuffle(len(ll), func(i, j int) {
+			ll[i], ll[j] = ll[j], ll[i]
+		})
+
+		return ll, nil
+	}
+	if err != ErrNoListeningTarget {
+		return nil, err
+	}
+	return &net.ListenConfig{}, nil
 }
