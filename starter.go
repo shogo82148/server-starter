@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -85,7 +86,7 @@ type Starter struct {
 
 	Logger   *log.Logger
 	mylogger *log.Logger
-	logfile  *os.File
+	logfile  io.WriteCloser
 
 	listeners  []net.Listener
 	generation int
@@ -189,12 +190,29 @@ func (s *Starter) openLogFile() error {
 	if s.LogFile == "" {
 		return nil
 	}
-	f, err := os.OpenFile(s.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
+	if s.LogFile[0] == '|' {
+		ctx, cancel := context.WithCancel(context.Background())
+		cmd := exec.CommandContext(ctx, "sh", "-c", s.LogFile[1:])
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			cancel()
+			return nil
+		}
+		s.logfile = stdin
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			defer cancel()
+			cmd.Run()
+		}()
+	} else {
+		f, err := os.OpenFile(s.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		s.logfile = f
 	}
-	s.mylogger = log.New(f, "", 0)
-	s.logfile = f
+	s.mylogger = log.New(s.logfile, "", 0)
 	return nil
 }
 
@@ -787,6 +805,9 @@ func (s *Starter) close() {
 			s.logf("failed to unlink file:%s:%s", f.Name(), err)
 		}
 		f.Close()
+	}
+	if s.logfile != nil {
+		s.logfile.Close()
 	}
 }
 
