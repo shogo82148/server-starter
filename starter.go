@@ -791,6 +791,9 @@ func (s *Starter) Close() error {
 }
 
 func (s *Starter) close() {
+	if s.logfile != nil {
+		s.logfile.Close()
+	}
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -802,13 +805,8 @@ func (s *Starter) close() {
 	}
 	s.wg.Wait()
 	if f := s.pidFile; f != nil {
-		if err := os.Remove(f.Name()); err != nil {
-			s.logf("failed to unlink file:%s:%s", f.Name(), err)
-		}
+		os.Remove(f.Name())
 		f.Close()
-	}
-	if s.logfile != nil {
-		s.logfile.Close()
 	}
 }
 
