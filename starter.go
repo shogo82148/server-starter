@@ -58,16 +58,20 @@ type Starter struct {
 	// working directory, start_server do chdir to before exec (optional)
 	Dir string
 
-	// TODO:
-	EnvDir              string
-	EnableAutoRestart   bool
+	// enables automatic restart by time.
+	EnableAutoRestart bool
+
+	// automatic restart interval (default 360). It is used with EnableAutoRestart option.
 	AutoRestartInterval time.Duration
-	Restart             bool
-	Stop                bool
-	Help                bool
-	Version             bool
-	Daemonize           bool
-	LogFile             string
+
+	// TODO:
+	EnvDir    string
+	Restart   bool
+	Stop      bool
+	Help      bool
+	Version   bool
+	Daemonize bool
+	LogFile   string
 
 	Logger *log.Logger
 
@@ -77,12 +81,13 @@ type Starter struct {
 	cancel     context.CancelFunc
 	pidFile    *os.File
 
-	wg         sync.WaitGroup
-	mu         sync.RWMutex
-	chreload   chan struct{}
-	chshutdown chan struct{}
-	workers    map[*worker]struct{}
-	onceClose  sync.Once
+	wg          sync.WaitGroup
+	mu          sync.RWMutex
+	chreload    chan struct{}
+	chshutdown  chan struct{}
+	chrestarter chan struct{}
+	workers     map[*worker]struct{}
+	onceClose   sync.Once
 }
 
 // Run starts the specified command.
@@ -96,6 +101,9 @@ func (s *Starter) Run() error {
 	s.getChReaload() <- struct{}{}
 
 	go s.waitSignal()
+	if s.EnableAutoRestart {
+		go s.autoRestarter()
+	}
 
 	if err := s.openPidFile(); err != nil {
 		return err
@@ -164,6 +172,35 @@ func (s *Starter) waitSignal() {
 			go s.Reload()
 		default:
 			go s.shutdownBySignal(sig)
+		}
+	}
+}
+
+func (s *Starter) autoRestarter() {
+	interval := s.autoRestartInterval()
+	var cnt int
+	var ticker *time.Ticker
+	var ch <-chan time.Time
+	for {
+		select {
+		case <-s.getChRestarter():
+			log.Println("reset")
+			cnt = 0
+			if ticker != nil {
+				ticker.Stop()
+			}
+			ticker = time.NewTicker(interval)
+			ch = ticker.C
+		case <-ch:
+			cnt++
+			if cnt == 1 {
+				s.logf("autorestart triggered (interval=%s)", interval)
+			} else {
+				s.logf("autorestart triggered (forced, interval=%s)", interval)
+			}
+			go s.Reload()
+		case <-s.ctx.Done():
+			return
 		}
 	}
 }
@@ -242,6 +279,11 @@ RETRY:
 		goto RETRY
 	}
 	timer.Stop()
+
+	// notify that starting new worker succeed to the restarter.
+	if ch := s.getChRestarter(); ch != nil {
+		ch <- struct{}{}
+	}
 
 	return w, nil
 }
@@ -395,14 +437,16 @@ func (s *Starter) listen() error {
 	var lc net.ListenConfig
 
 	for _, port := range s.Ports {
+		network := "tcp"
 		if idx := strings.LastIndexByte(port, '='); idx >= 0 {
 			return errors.New("fd options are not supported")
 		}
 		if _, err := strconv.Atoi(port); err == nil {
 			// by default, only bind to IPv4 (for compatibility)
 			port = net.JoinHostPort("0.0.0.0", port)
+			network = "tcp4"
 		}
-		l, err := lc.Listen(s.ctx, "tcp", port)
+		l, err := lc.Listen(s.ctx, network, port)
 		if err != nil {
 			s.logf("failed to listen to %s:%s", port, err)
 			return err
@@ -518,6 +562,18 @@ func (s *Starter) getChReaload() chan struct{} {
 	return s.chreload
 }
 
+func (s *Starter) getChRestarter() chan struct{} {
+	if !s.EnableAutoRestart {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.chrestarter == nil {
+		s.chrestarter = make(chan struct{})
+	}
+	return s.chrestarter
+}
+
 func (s *Starter) interval() time.Duration {
 	if s.Interval > 0 {
 		return s.Interval
@@ -529,7 +585,17 @@ func (s *Starter) killOldDelay() time.Duration {
 	if s.KillOldDelay > 0 {
 		return s.KillOldDelay
 	}
-	return 0 // TODO: The default value is 5 when --enable-auto-restart is set
+	if s.EnableAutoRestart {
+		return 5 * time.Second
+	}
+	return 0
+}
+
+func (s *Starter) autoRestartInterval() time.Duration {
+	if s.AutoRestartInterval > 0 {
+		return s.AutoRestartInterval
+	}
+	return 360 * time.Second
 }
 
 func (s *Starter) signalOnHUP() os.Signal {
