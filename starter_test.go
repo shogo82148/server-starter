@@ -520,3 +520,92 @@ func Test_AutoRestart(t *testing.T) {
 		t.Errorf("want another, got %s", pid2)
 	}
 }
+
+func Test_EnvDir(t *testing.T) {
+	dir, err := ioutil.TempDir("", "server-starter-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %s", err)
+	}
+	defer os.RemoveAll(dir)
+
+	// set up envdir
+	envdir := filepath.Join(dir, "envdir")
+	if err := os.Mkdir(envdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.Unsetenv("FOO")
+	envfile := filepath.Join(envdir, "FOO")
+	if err := ioutil.WriteFile(envfile, []byte(" old env \nsecond line will be ignored.\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// build server
+	binFile := filepath.Join(dir, "env")
+	cmd := exec.Command("go", "build", "-o", binFile, "testdata/env/main.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
+	}
+
+	sd := &Starter{
+		Command: binFile,
+		Ports:   []string{"0"},
+		EnvDir:  envdir,
+	}
+	defer sd.Shutdown(context.Background())
+	go func() {
+		if err := sd.Run(); err != nil {
+			t.Errorf("sd.Run() failed: %s", err)
+		}
+	}()
+
+	time.Sleep(500 * time.Millisecond) // wait for starting worker
+
+	getEnv := func() string {
+		// connect to the worker.
+		addr := sd.Listeners()[0].Addr().String()
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("fail to dial: %s", err)
+		}
+		defer conn.Close()
+		if _, err := conn.Write([]byte("hello")); err != nil {
+			t.Fatalf("fail to write: %s", err)
+		}
+		var buf [1024 * 1024]byte
+		n, err := conn.Read(buf[:])
+		if err != nil {
+			t.Fatalf("fail to read: %s", err)
+		}
+		return string(buf[:n])
+	}
+
+	// rewrite envdir...
+	if err := ioutil.WriteFile(envfile, []byte("new env\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// ... but the worker returns the old environment value before reload.
+	v := getEnv()
+	if v != " old env " {
+		t.Errorf("want old env, got %s", v)
+	}
+
+	// after reload, we can get the new environment value
+	time.Sleep(1 * time.Second)
+	go sd.Reload()
+	time.Sleep(2 * time.Second)
+	v = getEnv()
+	if v != "new env" {
+		t.Errorf("want new env, got %s", v)
+	}
+
+	if err := os.Remove(envfile); err != nil {
+		t.Fatal(err)
+	}
+	go sd.Reload()
+	time.Sleep(2 * time.Second)
+	v = getEnv()
+	if v != "" {
+		t.Errorf("want \"\", got %s", v)
+	}
+}
