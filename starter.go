@@ -80,9 +80,12 @@ type Starter struct {
 	// if set, redirects STDOUT and STDERR to given file or command
 	LogFile string
 
-	// TODO:
+	// this is a wrapper command that reads the pid of the start_server process from --pid-file,
+	// sends SIGHUP to the process and waits until the server(s) of the older generation(s) die by monitoring the contents of the --status-file
 	Restart bool
-	Stop    bool
+
+	// this is a wrapper command that reads the pid of the start_server process from --pid-file, sends SIGTERM to the process.
+	Stop bool
 
 	Logger   *log.Logger
 	mylogger *log.Logger
@@ -113,6 +116,12 @@ func (s *Starter) Run() error {
 	if s.Help {
 		showHelp()
 		return nil
+	}
+	if s.Restart {
+		return s.restart()
+	}
+	if s.Stop {
+		return s.stop()
 	}
 	if s.Daemonize {
 		s.logf("WARNING: --daemonize is UNIMPLEMENTED")
@@ -874,4 +883,12 @@ func (s *Starter) logf(format string, args ...interface{}) {
 	} else {
 		log.Printf(format, args...)
 	}
+}
+
+func (s *Starter) restart() error {
+	return nil
+}
+
+func (s *Starter) stop() error {
+	return nil
 }
