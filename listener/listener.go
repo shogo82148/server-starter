@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-//type ListenConfig
+// ListenConfig is a generator of net.Listener.
+type ListenConfig interface {
+	Listen(ctx context.Context, network, address string) (net.Listener, error)
+}
 
 // PortEnvName is the environment name for server_starter configures.
 // copied from the starter package.
@@ -222,7 +225,9 @@ func PortsSpecification() (string, bool) {
 	return os.LookupEnv(PortEnvName)
 }
 
-// Ports parses environment variable SERVER_STARTER_PORT
+// Ports parses the environment variable SERVER_STARTER_PORT,
+// and return ListenSpecs.
+// If SERVER_STARTER_PORT is not defined, return ErrNoListeningTarget.
 func Ports() (ListenSpecs, error) {
 	ll, err := parseListenTargets(PortsSpecification())
 	if err != nil {
@@ -236,4 +241,28 @@ func Ports() (ListenSpecs, error) {
 	})
 
 	return ll, nil
+}
+
+// PortsFallback returns the same result as Ports, if SERVER_STARTER_PORT is defined.
+// Otherwise returns net.ListenConfig instead of ListenSpecs.
+// Regardless of whether the process starts from the start_server command or not,
+// you can call Listen method.
+//
+//  lc, err := listener.PortsFallback()
+//  l, err := lc.Listen(ctx, "tcp", ":8080")
+func PortsFallback() (ListenConfig, error) {
+	ll, err := parseListenTargets(PortsSpecification())
+	if err == nil {
+		// emulate Perl's hash randomization
+		// to eeproduce the original behavior of https://metacpan.org/pod/Server::Starter#server_ports
+		rand.Shuffle(len(ll), func(i, j int) {
+			ll[i], ll[j] = ll[j], ll[i]
+		})
+
+		return ll, nil
+	}
+	if err != ErrNoListeningTarget {
+		return nil, err
+	}
+	return &net.ListenConfig{}, nil
 }
