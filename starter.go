@@ -70,12 +70,16 @@ type Starter struct {
 	// prints the version number
 	Version bool
 
-	// TODO:
-	Restart   bool
-	Stop      bool
-	Help      bool
+	// prints the help message.
+	Help bool
+
+	// deamonizes the server. (UNIMPLEMENTED)
 	Daemonize bool
-	LogFile   string
+
+	// TODO:
+	Restart bool
+	Stop    bool
+	LogFile string
 
 	Logger *log.Logger
 
@@ -99,6 +103,16 @@ func (s *Starter) Run() error {
 	if s.Version {
 		fmt.Println(Version)
 		return nil
+	}
+	if s.Help {
+		showHelp()
+		return nil
+	}
+	if s.Daemonize {
+		s.logf("WARNING: --daemonize is UNIMPLEMENTED")
+	}
+	if s.Command == "" {
+		return errors.New("command is required")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
