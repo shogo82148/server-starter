@@ -392,14 +392,16 @@ func (s *Starter) listen() error {
 	var lc net.ListenConfig
 
 	for _, port := range s.Ports {
+		network := "tcp"
 		if idx := strings.LastIndexByte(port, '='); idx >= 0 {
 			return errors.New("fd options are not supported")
 		}
 		if _, err := strconv.Atoi(port); err == nil {
 			// by default, only bind to IPv4 (for compatibility)
 			port = net.JoinHostPort("0.0.0.0", port)
+			network = "tcp4"
 		}
-		l, err := lc.Listen(s.ctx, "tcp", port)
+		l, err := lc.Listen(s.ctx, network, port)
 		if err != nil {
 			s.logf("failed to listen to %s:%s", port, err)
 			return err
