@@ -31,7 +31,7 @@ $(ARTIFACTS_DIR)/start_server_$(GOOS)_$(GOARCH):
 
 $(ARTIFACTS_DIR)/start_server_$(GOOS)_$(GOARCH)/start_server$(SUFFIX): $(ARTIFACTS_DIR)/start_server_$(GOOS)_$(GOARCH) $(SRC_FILES)
 	@echo " * Building binary for $(GOOS)/$(GOARCH)..."
-	@CGO_ENABLED=0 go build -o $@ .
+	@CGO_ENABLED=0 go build -o $@ github.com/shogo82148/server-starter/cmd/start_server
 
 build: $(ARTIFACTS_DIR)/start_server_$(GOOS)_$(GOARCH)/start_server$(SUFFIX)
 
