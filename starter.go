@@ -80,9 +80,12 @@ type Starter struct {
 	// if set, redirects STDOUT and STDERR to given file or command
 	LogFile string
 
-	// TODO:
+	// this is a wrapper command that reads the pid of the start_server process from --pid-file,
+	// sends SIGHUP to the process and waits until the server(s) of the older generation(s) die by monitoring the contents of the --status-file
 	Restart bool
-	Stop    bool
+
+	// this is a wrapper command that reads the pid of the start_server process from --pid-file, sends SIGTERM to the process.
+	Stop bool
 
 	Logger   *log.Logger
 	mylogger *log.Logger
@@ -113,6 +116,12 @@ func (s *Starter) Run() error {
 	if s.Help {
 		showHelp()
 		return nil
+	}
+	if s.Restart {
+		return s.restart()
+	}
+	if s.Stop {
+		return s.stop()
 	}
 	if s.Daemonize {
 		s.logf("WARNING: --daemonize is UNIMPLEMENTED")
@@ -874,4 +883,106 @@ func (s *Starter) logf(format string, args ...interface{}) {
 	} else {
 		log.Printf(format, args...)
 	}
+}
+
+func (s *Starter) restart() error {
+	if s.PidFile == "" || s.StatusFile == "" {
+		return errors.New("--restart option requires --pid-file and --status-file to be set as well")
+	}
+
+	// get pid
+	buf, err := ioutil.ReadFile(s.PidFile)
+	if err != nil {
+		return err
+	}
+	pid, err := strconv.Atoi(string(bytes.TrimSpace(buf)))
+	if err != nil {
+		return err
+	}
+
+	getGenerations := func() ([]int, error) {
+		buf, err := ioutil.ReadFile(s.StatusFile)
+		if err != nil {
+			return nil, err
+		}
+		gens := []int{}
+		for _, line := range bytes.Split(buf, []byte{'\n'}) {
+			idx := bytes.IndexByte(line, ':')
+			if idx < 0 {
+				continue
+			}
+			g, err := strconv.Atoi(string(line[:idx]))
+			if err != nil {
+				continue
+			}
+			gens = append(gens, g)
+		}
+		sort.Ints(gens)
+		return gens, nil
+	}
+	var waitFor int
+	if gens, err := getGenerations(); err != nil {
+		return err
+	} else if len(gens) == 0 {
+		return errors.New("no active process found in the status file")
+	} else {
+		waitFor = gens[len(gens)-1] + 1
+	}
+
+	// send HUP
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	if err := p.Signal(syscall.SIGHUP); err != nil {
+		return err
+	}
+
+	// wait for the generation
+	for {
+		gens, err := getGenerations()
+		if err != nil {
+			return err
+		}
+		if len(gens) == 1 && gens[0] == waitFor {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	return nil
+}
+
+func (s *Starter) stop() error {
+	if s.PidFile == "" {
+		return errors.New("--stop option requires --pid-file to be set as well")
+	}
+	f, err := os.OpenFile(s.PidFile, os.O_RDONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	buf, err := ioutil.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	pid, err := strconv.Atoi(string(bytes.TrimSpace(buf)))
+	if err != nil {
+		return err
+	}
+
+	s.logf("stop_server (pid:%d) stopping now (pid:%d)...", os.Getpid(), pid)
+
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	if err := p.Signal(syscall.SIGTERM); err != nil {
+		return err
+	}
+
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	return nil
 }
