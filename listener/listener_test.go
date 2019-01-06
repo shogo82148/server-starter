@@ -12,7 +12,7 @@ import (
 )
 
 func TestListenConfigs(t *testing.T) {
-	wantOK := func(ctx context.Context, t *testing.T, ll ListenConfigs, network, address string) {
+	wantOK := func(ctx context.Context, t *testing.T, ll ListenSpecs, network, address string) {
 		t.Helper()
 		l, err := ll.Listen(ctx, network, address)
 		if err != nil {
@@ -21,7 +21,7 @@ func TestListenConfigs(t *testing.T) {
 		}
 		l.Close()
 	}
-	wantNG := func(ctx context.Context, t *testing.T, ll ListenConfigs, network, address string) {
+	wantNG := func(ctx context.Context, t *testing.T, ll ListenSpecs, network, address string) {
 		t.Helper()
 		l, err := ll.Listen(ctx, network, address)
 		if err != nil {
@@ -47,7 +47,7 @@ func TestListenConfigs(t *testing.T) {
 		defer cancel()
 		_, port, _ := net.SplitHostPort(l.Addr().String())
 
-		ll := ListenConfigs{
+		ll := ListenSpecs{
 			listenConfig{
 				addr: l.Addr().String(),
 				fd:   f.Fd(),
@@ -78,7 +78,7 @@ func TestListenConfigs(t *testing.T) {
 		defer cancel()
 		_, port, _ := net.SplitHostPort(l.Addr().String())
 
-		ll := ListenConfigs{
+		ll := ListenSpecs{
 			listenConfig{
 				addr: l.Addr().String(),
 				fd:   f.Fd(),
@@ -111,7 +111,7 @@ func TestListenConfigs(t *testing.T) {
 		defer cancel()
 		_, port, _ := net.SplitHostPort(l.Addr().String())
 
-		ll := ListenConfigs{
+		ll := ListenSpecs{
 			listenConfig{
 				addr: l.Addr().String(),
 				fd:   f.Fd(),
@@ -143,7 +143,7 @@ func TestListenConfigs(t *testing.T) {
 		defer cancel()
 		_, port, _ := net.SplitHostPort(l.Addr().String())
 
-		ll := ListenConfigs{
+		ll := ListenSpecs{
 			listenConfig{
 				addr: l.Addr().String(),
 				fd:   f.Fd(),
@@ -188,7 +188,7 @@ func TestListenConfigs(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		ll := ListenConfigs{
+		ll := ListenSpecs{
 			listenConfig{
 				addr: "127.0.0.1:8000",
 				fd:   f.Fd(),
