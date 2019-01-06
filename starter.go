@@ -67,11 +67,13 @@ type Starter struct {
 	// directory that contains environment variables to the server processes.
 	EnvDir string
 
+	// prints the version number
+	Version bool
+
 	// TODO:
 	Restart   bool
 	Stop      bool
 	Help      bool
-	Version   bool
 	Daemonize bool
 	LogFile   string
 
@@ -94,6 +96,11 @@ type Starter struct {
 
 // Run starts the specified command.
 func (s *Starter) Run() error {
+	if s.Version {
+		fmt.Println(Version)
+		return nil
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	s.cancel = cancel
