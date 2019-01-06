@@ -96,8 +96,9 @@ type Starter struct {
 
 	wg          sync.WaitGroup
 	mu          sync.RWMutex
+	shutdown    bool
 	chreload    chan struct{}
-	chshutdown  chan struct{}
+	chstarter   chan struct{}
 	chrestarter chan struct{}
 	workers     map[*worker]struct{}
 	onceClose   sync.Once
@@ -162,15 +163,6 @@ func (s *Starter) Run() error {
 	return nil
 }
 
-func (s *Starter) getShutdownCh() chan struct{} {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.chshutdown == nil {
-		s.chshutdown = make(chan struct{})
-	}
-	return s.chshutdown
-}
-
 func (s *Starter) openPidFile() error {
 	if s.PidFile == "" {
 		return nil
@@ -182,7 +174,7 @@ func (s *Starter) openPidFile() error {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return err
 	}
-	fmt.Fprintf(f, "%d", os.Getpid())
+	fmt.Fprintf(f, "%d\n", os.Getpid())
 	s.pidFile = f
 	return nil
 }
@@ -307,11 +299,12 @@ func (s *Starter) startWorker() (*worker, error) {
 RETRY:
 	w, err := s.tryToStartWorker()
 	if err != nil {
+		if s.getShutdown() {
+			return nil, errShutdown
+		}
 		s.logf("failed to exec %s:%s", s.Command, err)
 		timer := time.NewTimer(s.interval())
 		select {
-		case <-s.getShutdownCh():
-			return nil, errShutdown
 		case <-timer.C:
 		}
 		goto RETRY
@@ -321,9 +314,10 @@ RETRY:
 	var state *os.ProcessState
 	timer := time.NewTimer(s.interval())
 	select {
-	case <-s.getShutdownCh():
-		return nil, errShutdown
 	case <-w.done:
+		if s.getShutdown() {
+			return nil, errShutdown
+		}
 		state = w.cmd.ProcessState
 	case <-timer.C:
 		timer.Reset(0)
@@ -351,6 +345,19 @@ RETRY:
 }
 
 func (s *Starter) tryToStartWorker() (*worker, error) {
+	if s.getShutdown() {
+		return nil, errShutdown
+	}
+	ch := s.getChStarter()
+	select {
+	case ch <- struct{}{}:
+	case <-s.ctx.Done():
+		return nil, s.ctx.Err()
+	}
+	defer func() {
+		<-ch
+	}()
+
 	type filer interface {
 		File() (*os.File, error)
 	}
@@ -596,11 +603,13 @@ RETRY:
 		s.logf("sleeping %d secs before killing old workers", int64(delay/time.Second))
 		timer := time.NewTimer(s.killOldDelay())
 		select {
-		case <-s.getShutdownCh():
-			return nil
 		case <-timer.C:
 		case <-w.done:
 			timer.Stop()
+			if s.getShutdown() {
+				return nil
+			}
+
 			// the new worker dies during sleep, restarting.
 			state := w.cmd.ProcessState
 			var msg string
@@ -630,6 +639,15 @@ func (s *Starter) getChReaload() chan struct{} {
 		s.chreload = make(chan struct{}, 1)
 	}
 	return s.chreload
+}
+
+func (s *Starter) getChStarter() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.chstarter == nil {
+		s.chstarter = make(chan struct{}, 1)
+	}
+	return s.chstarter
 }
 
 func (s *Starter) getChRestarter() chan struct{} {
@@ -745,7 +763,21 @@ func (s *Starter) updateStatusLocked() {
 
 // Shutdown terminates all workers.
 func (s *Starter) Shutdown(ctx context.Context) error {
-	close(s.getShutdownCh())
+	// stop starting new worker
+	if !s.getShutdown() {
+		select {
+		case s.getChStarter() <- struct{}{}:
+			defer func() {
+				<-s.getChStarter()
+			}()
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.ctx.Done():
+			return nil
+		}
+		s.setShutdown()
+	}
+
 	workers := s.listWorkers()
 	for _, w := range workers {
 		w.Signal(s.signalOnTERM(), workerStateShutdown)
@@ -761,7 +793,19 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 }
 
 func (s *Starter) shutdownBySignal(recv os.Signal) {
-	close(s.getShutdownCh())
+	// stop starting new worker
+	if !s.getShutdown() {
+		select {
+		case s.getChStarter() <- struct{}{}:
+			defer func() {
+				<-s.getChStarter()
+			}()
+		case <-s.ctx.Done():
+			return
+		}
+		s.setShutdown()
+	}
+
 	signal := os.Signal(syscall.SIGTERM)
 	if recv == syscall.SIGTERM {
 		signal = s.signalOnTERM()
@@ -782,6 +826,18 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 	}
 	s.Close()
 	s.logf("exiting")
+}
+
+func (s *Starter) setShutdown() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shutdown = true
+}
+
+func (s *Starter) getShutdown() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.shutdown
 }
 
 // Close terminates all workers immediately.
