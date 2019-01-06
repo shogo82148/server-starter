@@ -55,6 +55,9 @@ type Starter struct {
 	// if set, writes the process id of the start_server process to the file
 	PidFile string
 
+	// working directory, start_server do chdir to before exec (optional)
+	Dir string
+
 	// enables automatic restart by time.
 	EnableAutoRestart bool
 
@@ -69,7 +72,6 @@ type Starter struct {
 	Version   bool
 	Daemonize bool
 	LogFile   string
-	Dir       string
 
 	Logger *log.Logger
 
@@ -314,6 +316,7 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	env = append(env, fmt.Sprintf("%s=%s", PortEnvName, strings.Join(ports, ";")))
 	env = append(env, fmt.Sprintf("%s=%d", GenerationEnvName, s.generation))
 	cmd.Env = env
+	cmd.Dir = s.Dir
 	w := &worker{
 		ctx:        ctx,
 		cancel:     cancel,

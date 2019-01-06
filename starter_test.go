@@ -356,6 +356,64 @@ func Test_Unix(t *testing.T) {
 	}
 }
 
+func Test_Dir(t *testing.T) {
+	dir, err := ioutil.TempDir("", "server-starter-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %s", err)
+	}
+	defer os.RemoveAll(dir)
+
+	// build server
+	binFile := filepath.Join(dir, "dir")
+	cmd := exec.Command("go", "build", "-o", binFile, "testdata/dir/main.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
+	}
+
+	sd := &Starter{
+		Command: binFile,
+		Ports:   []string{"0"},
+		Dir:     dir,
+	}
+	defer sd.Shutdown(context.Background())
+	go func() {
+		if err := sd.Run(); err != nil {
+			t.Errorf("sd.Run() failed: %s", err)
+		}
+	}()
+
+	time.Sleep(500 * time.Millisecond) // wait for starting worker
+
+	// connect to the first worker.
+	addr := sd.Listeners()[0].Addr().String()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("fail to dial: %s", err)
+	}
+	if _, err := conn.Write([]byte("hello")); err != nil {
+		t.Fatalf("fail to write: %s", err)
+	}
+	var buf [1024 * 1024]byte
+	n, err := conn.Read(buf[:])
+	if err != nil {
+		t.Fatalf("fail to read: %s", err)
+	}
+	conn.Close()
+
+	stat1, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat2, err := os.Stat(string(buf[:n]))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !os.SameFile(stat1, stat2) {
+		t.Errorf("want %s, got %s", stat1.Name(), stat2.Name())
+	}
+}
+
 func Test_AutoRestart(t *testing.T) {
 	dir, err := ioutil.TempDir("", "server-starter-test")
 	if err != nil {
