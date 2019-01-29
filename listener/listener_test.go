@@ -31,6 +31,37 @@ func TestListenConfigs(t *testing.T) {
 		t.Errorf("%s, %s: error expected, got nil", network, address)
 	}
 
+	t.Run("default", func(t *testing.T) {
+		l, err := net.Listen("tcp4", "0.0.0.0:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer l.Close()
+
+		f, err := l.(interface{ File() (*os.File, error) }).File()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, port, _ := net.SplitHostPort(l.Addr().String())
+
+		ll := ListenSpecs{
+			listenSpec{
+				addr: port, // no host, just only port
+				fd:   f.Fd(),
+			},
+		}
+		wantOK(ctx, t, ll, "tcp", ":"+port)
+		wantOK(ctx, t, ll, "tcp4", ":"+port)
+		wantOK(ctx, t, ll, "tcp", "0.0.0.0:"+port)
+		wantOK(ctx, t, ll, "tcp4", "0.0.0.0:"+port)
+		wantNG(ctx, t, ll, "tcp6", ":"+port)
+		wantNG(ctx, t, ll, "tcp", "[::]:"+port)
+		wantNG(ctx, t, ll, "unix", "0.0.0.0:"+port)
+	})
+
 	t.Run("ipv4", func(t *testing.T) {
 		l, err := net.Listen("tcp4", "0.0.0.0:0")
 		if err != nil {
