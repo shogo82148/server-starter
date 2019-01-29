@@ -53,12 +53,15 @@ func TestListenConfigs(t *testing.T) {
 				fd:   f.Fd(),
 			},
 		}
+
+		// If host is not specified, then the program will bind to the default address of IPv4 ("0.0.0.0").
+		// https://metacpan.org/pod/distribution/Server-Starter/script/start_server#-port=(port|host:port|port=fd|host:port=fd)
 		wantOK(ctx, t, ll, "tcp", ":"+port)
 		wantOK(ctx, t, ll, "tcp4", ":"+port)
 		wantOK(ctx, t, ll, "tcp", "0.0.0.0:"+port)
 		wantOK(ctx, t, ll, "tcp4", "0.0.0.0:"+port)
 		wantNG(ctx, t, ll, "tcp6", ":"+port)
-		wantNG(ctx, t, ll, "tcp", "[::]:"+port)
+		wantOK(ctx, t, ll, "tcp", "[::]:"+port)
 		wantNG(ctx, t, ll, "unix", "0.0.0.0:"+port)
 	})
 
@@ -89,7 +92,7 @@ func TestListenConfigs(t *testing.T) {
 		wantOK(ctx, t, ll, "tcp", "0.0.0.0:"+port)
 		wantOK(ctx, t, ll, "tcp4", "0.0.0.0:"+port)
 		wantNG(ctx, t, ll, "tcp6", ":"+port)
-		wantNG(ctx, t, ll, "tcp", "[::]:"+port)
+		wantOK(ctx, t, ll, "tcp", "[::]:"+port)
 		wantNG(ctx, t, ll, "unix", "0.0.0.0:"+port)
 	})
 
@@ -119,7 +122,7 @@ func TestListenConfigs(t *testing.T) {
 		wantOK(ctx, t, ll, "tcp4", "127.0.0.1:"+port)
 		wantOK(ctx, t, ll, "tcp", "localhost:"+port)
 		wantOK(ctx, t, ll, "tcp4", "localhost:"+port)
-		wantNG(ctx, t, ll, "tcp", "[::1]:"+port)
+		wantOK(ctx, t, ll, "tcp", "[::1]:"+port)
 		wantNG(ctx, t, ll, "tcp6", "localhost:"+port)
 		wantNG(ctx, t, ll, "unix", "127.0.0.1:"+port)
 		wantNG(ctx, t, ll, "unix", "localhost:"+port)
