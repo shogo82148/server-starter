@@ -91,13 +91,23 @@ func (ll ListenSpecs) Listen(ctx context.Context, network, address string) (net.
 			}
 		}
 		for _, ip := range ips {
-			if network == "tcp4" && ip.IP.To4() == nil {
-				continue
+			v4 := ip.IP.To4()
+			if v4 != nil && (network == "tcp" || network == "tcp4") {
+				addrlist = append(addrlist, net.JoinHostPort(v4.String(), port))
 			}
-			if network == "tcp6" && ip.IP.To4() != nil {
-				continue
+
+			v6 := ip.IP.To16()
+			if v4 == nil && v6 != nil && (network == "tcp" || network == "tcp6") {
+				addrlist = append(addrlist, net.JoinHostPort(v6.String(), port))
 			}
-			addrlist = append(addrlist, net.JoinHostPort(ip.String(), port))
+
+			// fallback v6 to v4
+			if (network == "tcp" || network == "tcp4") && ip.IP.IsUnspecified() {
+				addrlist = append(addrlist, port, "0.0.0.0:"+port)
+			}
+			if (network == "tcp" || network == "tcp4") && ip.IP.IsLoopback() {
+				addrlist = append(addrlist, "127.0.0.1:"+port)
+			}
 		}
 	case "unix":
 		addrlist = []string{address}

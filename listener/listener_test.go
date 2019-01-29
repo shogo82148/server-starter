@@ -31,8 +31,8 @@ func TestListenConfigs(t *testing.T) {
 		t.Errorf("%s, %s: error expected, got nil", network, address)
 	}
 
-	t.Run("ipv4", func(t *testing.T) {
-		l, err := net.Listen("tcp4", ":0")
+	t.Run("default", func(t *testing.T) {
+		l, err := net.Listen("tcp4", "0.0.0.0:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +49,41 @@ func TestListenConfigs(t *testing.T) {
 
 		ll := ListenSpecs{
 			listenSpec{
-				addr: l.Addr().String(),
+				addr: port, // no host, just only port
+				fd:   f.Fd(),
+			},
+		}
+
+		// If host is not specified, then the program will bind to the default address of IPv4 ("0.0.0.0").
+		// https://metacpan.org/pod/distribution/Server-Starter/script/start_server#-port=(port|host:port|port=fd|host:port=fd)
+		wantOK(ctx, t, ll, "tcp", ":"+port)
+		wantOK(ctx, t, ll, "tcp4", ":"+port)
+		wantOK(ctx, t, ll, "tcp", "0.0.0.0:"+port)
+		wantOK(ctx, t, ll, "tcp4", "0.0.0.0:"+port)
+		wantNG(ctx, t, ll, "tcp6", ":"+port)
+		wantOK(ctx, t, ll, "tcp", "[::]:"+port)
+		wantNG(ctx, t, ll, "unix", "0.0.0.0:"+port)
+	})
+
+	t.Run("ipv4", func(t *testing.T) {
+		l, err := net.Listen("tcp4", "0.0.0.0:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer l.Close()
+
+		f, err := l.(interface{ File() (*os.File, error) }).File()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, port, _ := net.SplitHostPort(l.Addr().String())
+
+		ll := ListenSpecs{
+			listenSpec{
+				addr: "0.0.0.0:" + port,
 				fd:   f.Fd(),
 			},
 		}
@@ -58,7 +92,7 @@ func TestListenConfigs(t *testing.T) {
 		wantOK(ctx, t, ll, "tcp", "0.0.0.0:"+port)
 		wantOK(ctx, t, ll, "tcp4", "0.0.0.0:"+port)
 		wantNG(ctx, t, ll, "tcp6", ":"+port)
-		wantNG(ctx, t, ll, "tcp", "[::]:"+port)
+		wantOK(ctx, t, ll, "tcp", "[::]:"+port)
 		wantNG(ctx, t, ll, "unix", "0.0.0.0:"+port)
 	})
 
@@ -80,7 +114,7 @@ func TestListenConfigs(t *testing.T) {
 
 		ll := ListenSpecs{
 			listenSpec{
-				addr: l.Addr().String(),
+				addr: "127.0.0.1:" + port,
 				fd:   f.Fd(),
 			},
 		}
@@ -88,7 +122,7 @@ func TestListenConfigs(t *testing.T) {
 		wantOK(ctx, t, ll, "tcp4", "127.0.0.1:"+port)
 		wantOK(ctx, t, ll, "tcp", "localhost:"+port)
 		wantOK(ctx, t, ll, "tcp4", "localhost:"+port)
-		wantNG(ctx, t, ll, "tcp", "[::1]:"+port)
+		wantOK(ctx, t, ll, "tcp", "[::1]:"+port)
 		wantNG(ctx, t, ll, "tcp6", "localhost:"+port)
 		wantNG(ctx, t, ll, "unix", "127.0.0.1:"+port)
 		wantNG(ctx, t, ll, "unix", "localhost:"+port)
@@ -113,7 +147,7 @@ func TestListenConfigs(t *testing.T) {
 
 		ll := ListenSpecs{
 			listenSpec{
-				addr: l.Addr().String(),
+				addr: "[::]:" + port,
 				fd:   f.Fd(),
 			},
 		}
@@ -145,7 +179,7 @@ func TestListenConfigs(t *testing.T) {
 
 		ll := ListenSpecs{
 			listenSpec{
-				addr: l.Addr().String(),
+				addr: "[::1]:" + port,
 				fd:   f.Fd(),
 			},
 		}
