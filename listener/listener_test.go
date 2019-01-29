@@ -32,7 +32,7 @@ func TestListenConfigs(t *testing.T) {
 	}
 
 	t.Run("ipv4", func(t *testing.T) {
-		l, err := net.Listen("tcp4", ":0")
+		l, err := net.Listen("tcp4", "0.0.0.0:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +49,7 @@ func TestListenConfigs(t *testing.T) {
 
 		ll := ListenSpecs{
 			listenSpec{
-				addr: l.Addr().String(),
+				addr: "0.0.0.0:" + port,
 				fd:   f.Fd(),
 			},
 		}
@@ -80,7 +80,7 @@ func TestListenConfigs(t *testing.T) {
 
 		ll := ListenSpecs{
 			listenSpec{
-				addr: l.Addr().String(),
+				addr: "127.0.0.1:" + port,
 				fd:   f.Fd(),
 			},
 		}
@@ -113,7 +113,7 @@ func TestListenConfigs(t *testing.T) {
 
 		ll := ListenSpecs{
 			listenSpec{
-				addr: l.Addr().String(),
+				addr: "[::]:" + port,
 				fd:   f.Fd(),
 			},
 		}
@@ -145,7 +145,7 @@ func TestListenConfigs(t *testing.T) {
 
 		ll := ListenSpecs{
 			listenSpec{
-				addr: l.Addr().String(),
+				addr: "[::1]:" + port,
 				fd:   f.Fd(),
 			},
 		}
