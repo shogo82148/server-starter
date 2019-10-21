@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"net"
 	"os"
@@ -63,6 +64,7 @@ func (ll ListenSpecs) String() string {
 // Listen announces on the local network address.
 // The network must be "tcp", "tcp4", "tcp6", "unix" or "unixpacket".
 func (ll ListenSpecs) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+	log.Printf("Listen: %s %s", network, address)
 	var addrlist []string
 	switch network {
 	case "tcp", "tcp4", "tcp6":
@@ -91,13 +93,14 @@ func (ll ListenSpecs) Listen(ctx context.Context, network, address string) (net.
 			}
 		}
 		for _, ip := range ips {
+			log.Println(ip)
 			v4 := ip.IP.To4()
 			if v4 != nil && (network == "tcp" || network == "tcp4") {
 				addrlist = append(addrlist, net.JoinHostPort(v4.String(), port))
 			}
 
 			v6 := ip.IP.To16()
-			if v4 == nil && v6 != nil && (network == "tcp" || network == "tcp6") {
+			if v6 != nil && (network == "tcp" || v4 == nil && network == "tcp6") {
 				addrlist = append(addrlist, net.JoinHostPort(v6.String(), port))
 			}
 
