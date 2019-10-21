@@ -120,12 +120,8 @@ func TestListenConfigs(t *testing.T) {
 		}
 		wantOK(ctx, t, ll, "tcp", "127.0.0.1:"+port)
 		wantOK(ctx, t, ll, "tcp4", "127.0.0.1:"+port)
-		wantOK(ctx, t, ll, "tcp", "localhost:"+port)
-		wantOK(ctx, t, ll, "tcp4", "localhost:"+port)
 		wantOK(ctx, t, ll, "tcp", "[::1]:"+port)
-		wantNG(ctx, t, ll, "tcp6", "localhost:"+port)
 		wantNG(ctx, t, ll, "unix", "127.0.0.1:"+port)
-		wantNG(ctx, t, ll, "unix", "localhost:"+port)
 	})
 
 	t.Run("ipv6", func(t *testing.T) {
@@ -185,12 +181,8 @@ func TestListenConfigs(t *testing.T) {
 		}
 		wantOK(ctx, t, ll, "tcp", "[::1]:"+port)
 		wantOK(ctx, t, ll, "tcp6", "[::1]:"+port)
-		wantOK(ctx, t, ll, "tcp", "localhost:"+port)
-		wantOK(ctx, t, ll, "tcp6", "localhost:"+port)
 		wantNG(ctx, t, ll, "tcp", "127.0.0.1:"+port)
-		wantNG(ctx, t, ll, "tcp4", "localhost:"+port)
 		wantNG(ctx, t, ll, "unix", "[::1]:"+port)
-		wantNG(ctx, t, ll, "unix", "localhost:"+port)
 	})
 
 	t.Run("unix", func(t *testing.T) {
