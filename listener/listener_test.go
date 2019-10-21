@@ -236,7 +236,7 @@ func TestListenConfigs(t *testing.T) {
 }
 
 func TestPort(t *testing.T) {
-	caces := []struct {
+	cases := []struct {
 		in string
 		ll []listenSpec
 	}{
@@ -277,7 +277,7 @@ func TestPort(t *testing.T) {
 		},
 	}
 
-	for i, tc := range caces {
+	for i, tc := range cases {
 		ll, err := parseListenTargets(tc.in, true)
 		if err != nil {
 			t.Error(err)
