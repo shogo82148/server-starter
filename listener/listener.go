@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
 	"net"
 	"os"
 	"strconv"
@@ -243,13 +242,6 @@ func Ports() (ListenSpecs, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// emulate Perl's hash randomization
-	// to eeproduce the original behavior of https://metacpan.org/pod/Server::Starter#server_ports
-	rand.Shuffle(len(ll), func(i, j int) {
-		ll[i], ll[j] = ll[j], ll[i]
-	})
-
 	return ll, nil
 }
 
@@ -263,12 +255,6 @@ func Ports() (ListenSpecs, error) {
 func PortsFallback() (ListenConfig, error) {
 	ll, err := parseListenTargets(PortsSpecification())
 	if err == nil {
-		// emulate Perl's hash randomization
-		// to eeproduce the original behavior of https://metacpan.org/pod/Server::Starter#server_ports
-		rand.Shuffle(len(ll), func(i, j int) {
-			ll[i], ll[j] = ll[j], ll[i]
-		})
-
 		return ll, nil
 	}
 	if err != ErrNoListeningTarget {
