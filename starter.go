@@ -333,13 +333,7 @@ RETRY:
 	}
 
 	if state != nil {
-		var msg string
-		if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
-			msg = "exit status: " + strconv.Itoa(s.ExitStatus())
-		} else {
-			msg = state.String()
-		}
-		s.logf("new worker %d seems to have failed to start, %s", w.Pid(), msg)
+		s.logf("new worker %d seems to have failed to start, exit status: %d", w.Pid(), state.ExitCode())
 		<-timer.C
 		goto RETRY
 	}
@@ -452,16 +446,10 @@ func (w *worker) watch() {
 				s.logf("failed to send signal %s to %d", signalToName(sig.signal), w.Pid())
 			}
 		case <-w.done:
-			var msg string
 			st := w.cmd.ProcessState
-			if s, ok := st.Sys().(syscall.WaitStatus); ok && s.Exited() {
-				msg = "status: " + strconv.Itoa(s.ExitStatus())
-			} else {
-				msg = st.String()
-			}
 			switch state {
 			case workerStateInit:
-				s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
+				s.logf("worker %d died unexpectedly with status %d, restarting", w.Pid(), st.ExitCode())
 				w.starter.wg.Add(1)
 				go func() {
 					defer s.wg.Done()
@@ -482,9 +470,9 @@ func (w *worker) watch() {
 					w.Watch()
 				}()
 			case workerStateOld:
-				s.logf("old worker %d died, %s", w.Pid(), msg)
+				s.logf("old worker %d died, status %d", w.Pid(), st.ExitCode())
 			case workerStateShutdown:
-				s.logf("worker %d died, %s", w.Pid(), msg)
+				s.logf("worker %d died, status %d", w.Pid(), st.ExitCode())
 			default:
 				panic(fmt.Sprintf("unknown state: %d", state))
 			}
@@ -621,13 +609,7 @@ RETRY:
 
 			// the new worker dies during sleep, restarting.
 			state := w.cmd.ProcessState
-			var msg string
-			if s, ok := state.Sys().(syscall.WaitStatus); ok && s.Exited() {
-				msg = "exit status: " + strconv.Itoa(s.ExitStatus())
-			} else {
-				msg = state.String()
-			}
-			s.logf("worker %d died unexpectedly with %s, restarting", w.Pid(), msg)
+			s.logf("worker %d died unexpectedly with status %d, restarting", w.Pid(), state.ExitCode())
 			goto RETRY
 		}
 	}
