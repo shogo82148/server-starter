@@ -54,7 +54,7 @@ func showHelp() {
 		"    if set, redirects STDOUT and STDERR to given file or command\n",
 		"\n",
 		"  --daemonize: (UNIMPLEMENTED)\n",
-		"    deamonizes the server.\n",
+		"    daemonizes the server.\n",
 		"\n",
 		"  --enable-auto-restart:\n",
 		"    enables automatic restart by time.\n",
