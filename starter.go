@@ -756,16 +756,18 @@ func (s *Starter) updateStatusLocked() {
 func (s *Starter) Shutdown(ctx context.Context) error {
 	// stop starting new worker
 	if s.shutdown.TrySet(true) {
+		// wait for a worker that is currently starting
+		ch := s.getChStarter()
 		select {
-		case s.getChStarter() <- struct{}{}:
-			defer func() {
-				<-s.getChStarter()
-			}()
+		case ch <- struct{}{}:
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-s.ctx.Done():
 			return nil
 		}
+		defer func() {
+			<-ch
+		}()
 	}
 
 	workers := s.listWorkers()
@@ -785,14 +787,16 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 func (s *Starter) shutdownBySignal(recv os.Signal) {
 	// stop starting new worker
 	if s.shutdown.TrySet(true) {
+		// wait for a worker that is currently starting
+		ch := s.getChStarter()
 		select {
-		case s.getChStarter() <- struct{}{}:
-			defer func() {
-				<-s.getChStarter()
-			}()
+		case ch <- struct{}{}:
 		case <-s.ctx.Done():
 			return
 		}
+		defer func() {
+			<-ch
+		}()
 	}
 
 	signal := os.Signal(syscall.SIGTERM)
