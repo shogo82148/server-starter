@@ -74,7 +74,7 @@ type Starter struct {
 	// prints the help message.
 	Help bool
 
-	// deamonizes the server. (UNIMPLEMENTED)
+	// daemonize the server. (UNIMPLEMENTED)
 	Daemonize bool
 
 	// if set, redirects STDOUT and STDERR to given file or command
@@ -139,7 +139,7 @@ func (s *Starter) Run() error {
 	defer s.Close()
 
 	// block reload during start up
-	s.getChReaload() <- struct{}{}
+	s.getChReload() <- struct{}{}
 
 	go s.waitSignal()
 	if s.EnableAutoRestart {
@@ -166,7 +166,7 @@ func (s *Starter) Run() error {
 	w.Watch()
 
 	// enable reload
-	<-s.getChReaload()
+	<-s.getChReload()
 
 	s.wg.Wait()
 	return nil
@@ -465,7 +465,7 @@ func (w *worker) watch() {
 				w.starter.wg.Add(1)
 				go func() {
 					defer s.wg.Done()
-					chreload := s.getChReaload()
+					chreload := s.getChReload()
 					select {
 					case chreload <- struct{}{}:
 						defer func() {
@@ -571,7 +571,7 @@ func (s *Starter) Listeners() []net.Listener {
 
 // Reload XX
 func (s *Starter) Reload() error {
-	chreload := s.getChReaload()
+	chreload := s.getChReload()
 	select {
 	case chreload <- struct{}{}:
 		defer func() {
@@ -641,7 +641,7 @@ RETRY:
 	return nil
 }
 
-func (s *Starter) getChReaload() chan struct{} {
+func (s *Starter) getChReload() chan struct{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.chreload == nil {
