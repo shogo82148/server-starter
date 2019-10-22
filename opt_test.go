@@ -59,7 +59,7 @@ func TestParseArgs(t *testing.T) {
 			t.Error(err)
 		}
 		if s.Command != "--version" {
-			t.Errorf("want --versionr, got %s", s.Command)
+			t.Errorf("want --version, got %s", s.Command)
 		}
 		if s.Version {
 			t.Error("want false, got true")
