@@ -96,7 +96,7 @@ func (ll ListenSpecs) Listen(ctx context.Context, network, address string) (net.
 			}
 
 			v6 := ip.IP.To16()
-			if v4 == nil && v6 != nil && (network == "tcp" || network == "tcp6") {
+			if v6 != nil && (network == "tcp" || v4 == nil && network == "tcp6") {
 				addrlist = append(addrlist, net.JoinHostPort(v6.String(), port))
 			}
 
