@@ -99,7 +99,7 @@ type Starter struct {
 
 	wg          sync.WaitGroup
 	mu          sync.RWMutex
-	shutdown    bool
+	shutdown    atomicBool
 	chreload    chan struct{}
 	chstarter   chan struct{}
 	chrestarter chan struct{}
@@ -308,7 +308,7 @@ func (s *Starter) startWorker() (*worker, error) {
 RETRY:
 	w, err := s.tryToStartWorker()
 	if err != nil {
-		if s.getShutdown() {
+		if s.shutdown.IsSet() {
 			return nil, errShutdown
 		}
 		s.logf("failed to exec %s:%s", s.Command, err)
@@ -324,7 +324,7 @@ RETRY:
 	timer := time.NewTimer(s.interval())
 	select {
 	case <-w.done:
-		if s.getShutdown() {
+		if s.shutdown.IsSet() {
 			return nil, errShutdown
 		}
 		state = w.cmd.ProcessState
@@ -348,7 +348,7 @@ RETRY:
 }
 
 func (s *Starter) tryToStartWorker() (*worker, error) {
-	if s.getShutdown() {
+	if s.shutdown.IsSet() {
 		return nil, errShutdown
 	}
 	ch := s.getChStarter()
@@ -603,7 +603,7 @@ RETRY:
 		case <-timer.C:
 		case <-w.done:
 			timer.Stop()
-			if s.getShutdown() {
+			if s.shutdown.IsSet() {
 				return nil
 			}
 
@@ -755,7 +755,7 @@ func (s *Starter) updateStatusLocked() {
 // Shutdown terminates all workers.
 func (s *Starter) Shutdown(ctx context.Context) error {
 	// stop starting new worker
-	if !s.getShutdown() {
+	if s.shutdown.TrySet(true) {
 		select {
 		case s.getChStarter() <- struct{}{}:
 			defer func() {
@@ -766,7 +766,6 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 		case <-s.ctx.Done():
 			return nil
 		}
-		s.setShutdown()
 	}
 
 	workers := s.listWorkers()
@@ -785,7 +784,7 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 
 func (s *Starter) shutdownBySignal(recv os.Signal) {
 	// stop starting new worker
-	if !s.getShutdown() {
+	if s.shutdown.TrySet(true) {
 		select {
 		case s.getChStarter() <- struct{}{}:
 			defer func() {
@@ -794,7 +793,6 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 		case <-s.ctx.Done():
 			return
 		}
-		s.setShutdown()
 	}
 
 	signal := os.Signal(syscall.SIGTERM)
@@ -817,18 +815,6 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 	}
 	s.Close()
 	s.logf("exiting")
-}
-
-func (s *Starter) setShutdown() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.shutdown = true
-}
-
-func (s *Starter) getShutdown() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.shutdown
 }
 
 // Close terminates all workers immediately.
