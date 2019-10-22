@@ -139,8 +139,9 @@ func (s *Starter) Run() error {
 	defer s.Close()
 
 	// block reload during start up
-	s.getChReload() <- struct{}{}
+	s.lockReload()
 
+	// start background goroutines
 	go s.waitSignal()
 	if s.EnableAutoRestart {
 		go s.autoRestarter()
@@ -156,6 +157,8 @@ func (s *Starter) Run() error {
 		}
 		return err
 	}
+
+	// start first generation
 	w, err := s.startWorker()
 	if err != nil {
 		if err == errShutdown {
@@ -166,7 +169,7 @@ func (s *Starter) Run() error {
 	w.Watch()
 
 	// enable reload
-	<-s.getChReload()
+	s.unlockReload()
 
 	s.wg.Wait()
 	return nil
@@ -453,16 +456,10 @@ func (w *worker) watch() {
 				w.starter.wg.Add(1)
 				go func() {
 					defer s.wg.Done()
-					chreload := s.getChReload()
-					select {
-					case chreload <- struct{}{}:
-						defer func() {
-							<-chreload
-						}()
-					default:
-						// already restarting, skip.
-						return
+					if !s.tryToLockReload() {
+						return // restarting proccess is already started, skip
 					}
+					defer s.unlockReload()
 					w, err := s.startWorker()
 					if err != nil {
 						return
@@ -559,15 +556,10 @@ func (s *Starter) Listeners() []net.Listener {
 
 // Reload XX
 func (s *Starter) Reload() error {
-	chreload := s.getChReload()
-	select {
-	case chreload <- struct{}{}:
-		defer func() {
-			<-chreload
-		}()
-	default:
+	if !s.tryToLockReload() {
 		return nil
 	}
+	defer s.unlockReload()
 
 RETRY:
 	w, err := s.startWorker()
@@ -630,6 +622,24 @@ func (s *Starter) getChReload() chan struct{} {
 		s.chreload = make(chan struct{}, 1)
 	}
 	return s.chreload
+}
+
+func (s *Starter) tryToLockReload() (locked bool) {
+	ch := s.getChReload()
+	select {
+	case ch <- struct{}{}:
+		return true
+	default:
+	}
+	return false
+}
+
+func (s *Starter) lockReload() {
+	s.getChReload() <- struct{}{}
+}
+
+func (s *Starter) unlockReload() {
+	<-s.getChReload()
 }
 
 func (s *Starter) getChStarter() chan struct{} {
