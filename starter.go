@@ -22,6 +22,11 @@ import (
 
 var errShutdown = errors.New("starter: now shutdown")
 
+type socket interface {
+	File() (*os.File, error)
+	Close() error
+}
+
 // PortEnvName is the environment name for server_starter configures.
 const PortEnvName = "SERVER_STARTER_PORT"
 
@@ -91,7 +96,7 @@ type Starter struct {
 	mylogger *log.Logger
 	logfile  io.WriteCloser
 
-	listeners  []net.Listener
+	sockets    []socket
 	generation int
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -363,14 +368,20 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	defer func() {
 		<-ch
 	}()
-
-	type filer interface {
-		File() (*os.File, error)
+	addr := func(sock socket) string {
+		if addr, ok := sock.(interface{ Addr() net.Addr }); ok {
+			return addr.Addr().String()
+		}
+		if addr, ok := sock.(interface{ LocalAddr() net.Addr }); ok {
+			return addr.LocalAddr().String()
+		}
+		panic("fail to get addr")
 	}
-	files := make([]*os.File, len(s.listeners))
-	ports := make([]string, len(s.listeners))
-	for i, l := range s.listeners {
-		f, err := l.(filer).File()
+
+	files := make([]*os.File, len(s.sockets))
+	ports := make([]string, len(s.sockets))
+	for i, sock := range s.sockets {
+		f, err := sock.File()
 		if err != nil {
 			return nil, err
 		}
@@ -378,7 +389,7 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 
 		// file descriptor numbers in ExtraFiles turn out to be
 		// index + 3, so we can just hard code it
-		ports[i] = fmt.Sprintf("%s=%d", l.Addr().String(), i+3)
+		ports[i] = fmt.Sprintf("%s=%d", addr(sock), i+3)
 	}
 
 	s.generation++
@@ -504,54 +515,105 @@ func (w *worker) close() error {
 }
 
 func (s *Starter) listen() error {
-	var listeners []net.Listener
+	var errListen error
+	var sockets []socket
 	var lc net.ListenConfig
 
-	for _, port := range s.Ports {
-		network := "tcp"
-		if idx := strings.LastIndexByte(port, '='); idx >= 0 {
-			return errors.New("fd options are not supported")
+	for _, hostport := range s.Ports {
+		suffix := ""
+		if idx := strings.LastIndexByte(hostport, '='); idx >= 0 {
+			s.logf("%s: fd options are not supported", hostport)
+			if errListen == nil {
+				errListen = errors.New("fd options are not supported")
+			}
+			continue
 		}
-		if _, err := strconv.Atoi(port); err == nil {
-			// by default, only bind to IPv4 (for compatibility)
-			port = net.JoinHostPort("0.0.0.0", port)
-			network = "tcp4"
-		}
-		l, err := lc.Listen(s.ctx, network, port)
+		host, port, err := net.SplitHostPort(hostport)
 		if err != nil {
-			s.logf("failed to listen to %s:%s", port, err)
-			return err
+			// try to parse the hostport as a port number
+			// by default, only bind to IPv4 (for compatibility)
+			host = "0.0.0.0"
+			port = hostport
+			suffix = "4"
 		}
-		listeners = append(listeners, l)
+
+		var sock socket
+		var ok bool
+		if strings.HasPrefix(port, "u") {
+			// Listen UDP Port
+			port = strings.TrimPrefix(port, "u")
+			hostport = net.JoinHostPort(host, port)
+			conn, err := lc.ListenPacket(s.ctx, "udp"+suffix, hostport)
+			if err != nil {
+				s.logf("%s: failed to listen: %s", hostport, err)
+				if errListen == nil {
+					errListen = err
+				}
+				continue
+			}
+			sock, ok = conn.(socket)
+		} else {
+			// Listen TCP Port
+			hostport = net.JoinHostPort(host, port)
+			l, err := lc.Listen(s.ctx, "tcp"+suffix, hostport)
+			if err != nil {
+				s.logf("%s: failed to listen: %s", hostport, err)
+				if errListen == nil {
+					errListen = err
+				}
+				continue
+			}
+			sock, ok = l.(socket)
+		}
+		if !ok {
+			s.logf("%s: fail to get file description", hostport)
+			if errListen == nil {
+				errListen = errors.New("fail to get file description")
+			}
+			continue
+		}
+		sockets = append(sockets, sock)
 	}
 
 	for _, path := range s.Paths {
 		if stat, err := os.Lstat(path); err == nil && stat.Mode()&os.ModeSocket == os.ModeSocket {
-			s.logf("removing existing socket file:%s", path)
+			s.logf("removing existing socket file: %s", path)
 			if err := os.Remove(path); err != nil {
-				s.logf("failed to remove existing socket file:%s:%s", path, err)
+				s.logf("failed to remove existing socket file: %s: %s", path, err)
+				if errListen == nil {
+					errListen = err
+				}
+				continue
 			}
 		}
 		_ = os.Remove(path)
 		l, err := lc.Listen(s.ctx, "unix", path)
 		if err != nil {
-			s.logf("failed to listen to file %s:%s", path, err)
-			return err
+			s.logf("%s: failed to listen: %s", path, err)
+			if errListen == nil {
+				errListen = err
+			}
+			continue
 		}
-		listeners = append(listeners, l)
+		socket, ok := l.(socket)
+		if !ok {
+			s.logf("%s: fail to get file description", path)
+			if errListen == nil {
+				errListen = errors.New("fail to get file description")
+			}
+			continue
+		}
+		sockets = append(sockets, socket)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.listeners = listeners
+	if errListen != nil {
+		for _, sock := range sockets {
+			sock.Close()
+		}
+		return errListen
+	}
+	s.sockets = sockets
 	return nil
-}
-
-// Listeners returns the listeners.
-func (s *Starter) Listeners() []net.Listener {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.listeners
 }
 
 // Reload XX
@@ -844,9 +906,9 @@ func (s *Starter) close() {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	for _, l := range s.Listeners() {
-		l.Close()
-		if l, ok := l.(*net.UnixListener); ok {
+	for _, sock := range s.sockets {
+		sock.Close()
+		if l, ok := sock.(*net.UnixListener); ok {
 			os.Remove(l.Addr().String())
 		}
 	}
