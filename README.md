@@ -4,7 +4,7 @@ server-starter
 Yet Another Go port of ```start_server``` utility (a.k.a. [Server::Starter](https://metacpan.org/pod/Server::Starter)),
 based on [lestrrat-go/server-starter](https://github.com/lestrrat-go/server-starter).
 
-[![Build Status](https://travis-ci.com/shogo82148/server-starter.png?branch=master)](https://travis-ci.com/shogo82148/server-starter)
+[![GitHub Actions status](https://github.com/shogo82148/server-starter/workflows/Test/badge.svg)](https://github.com/shogo82148/server-starter/actions)
 
 [![GoDoc](https://godoc.org/github.com/shogo82148/server-starter?status.svg)](https://godoc.org/github.com/shogo82148/server-starter)
 
