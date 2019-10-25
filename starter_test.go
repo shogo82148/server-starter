@@ -176,8 +176,6 @@ func Test_StartFail(t *testing.T) {
 
 	time.Sleep(3 * time.Second) // wait for starting worker
 
-	// connect to the first worker.
-	addr = sd.Listeners()[0].Addr().String()
 	// the first generation fails to start, so the generation number starts from 2.
 	generation := getGeneration()
 	if generation != "2" {
@@ -193,7 +191,7 @@ func Test_StartFail(t *testing.T) {
 		t.Errorf("want %s, got %s", "2", generation)
 	}
 
-	// wait until server succeds in reboot
+	// wait until server succeeds in reboot
 	time.Sleep(5 * time.Second)
 	generation = getGeneration()
 	if generation != "5" {

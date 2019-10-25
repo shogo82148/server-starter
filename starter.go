@@ -378,9 +378,10 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		panic("fail to get addr")
 	}
 
-	files := make([]*os.File, len(s.sockets))
-	ports := make([]string, len(s.sockets))
-	for i, sock := range s.sockets {
+	sockets := s.getSockets()
+	files := make([]*os.File, len(sockets))
+	ports := make([]string, len(sockets))
+	for i, sock := range sockets {
 		f, err := sock.File()
 		if err != nil {
 			return nil, err
@@ -612,8 +613,43 @@ func (s *Starter) listen() error {
 		}
 		return errListen
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.sockets = sockets
 	return nil
+}
+
+// Listeners returns the listeners.
+func (s *Starter) Listeners() []net.Listener {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	listeners := make([]net.Listener, 0, len(s.sockets))
+	for _, sock := range s.sockets {
+		if l, ok := sock.(net.Listener); ok {
+			listeners = append(listeners, l)
+		}
+	}
+	return listeners
+}
+
+// PacketConns returns the PacketConns.
+func (s *Starter) PacketConns() []net.PacketConn {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	conns := make([]net.PacketConn, 0, len(s.sockets))
+	for _, sock := range s.sockets {
+		if conn, ok := sock.(net.PacketConn); ok {
+			conns = append(conns, conn)
+		}
+	}
+	return conns
+}
+
+func (s *Starter) getSockets() []socket {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sockets
 }
 
 // Reload XX
@@ -906,7 +942,7 @@ func (s *Starter) close() {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	for _, sock := range s.sockets {
+	for _, sock := range s.getSockets() {
 		sock.Close()
 		if l, ok := sock.(*net.UnixListener); ok {
 			os.Remove(l.Addr().String())
