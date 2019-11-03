@@ -227,6 +227,176 @@ func TestListenConfigs(t *testing.T) {
 	})
 }
 
+func TestListenConfigs_ListenPacket(t *testing.T) {
+	wantOK := func(ctx context.Context, t *testing.T, ll ListenSpecs, network, address string) {
+		t.Helper()
+		conn, err := ll.ListenPacket(ctx, network, address)
+		if err != nil {
+			t.Errorf("%s, %s: unexpected error: %v", network, address, err)
+			return
+		}
+		conn.Close()
+	}
+	wantNG := func(ctx context.Context, t *testing.T, ll ListenSpecs, network, address string) {
+		t.Helper()
+		conn, err := ll.ListenPacket(ctx, network, address)
+		if err != nil {
+			return
+		}
+		conn.Close()
+		t.Errorf("%s, %s: error expected, got nil", network, address)
+	}
+
+	t.Run("default", func(t *testing.T) {
+		conn, err := net.ListenPacket("udp4", "0.0.0.0:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+
+		f, err := conn.(interface{ File() (*os.File, error) }).File()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
+
+		ll := ListenSpecs{
+			listenSpec{
+				addr: port, // no host, just only port
+				fd:   f.Fd(),
+			},
+		}
+
+		// If host is not specified, then the program will bind to the default address of IPv4 ("0.0.0.0").
+		// https://metacpan.org/pod/distribution/Server-Starter/script/start_server#-port=(port|host:port|port=fd|host:port=fd)
+		wantOK(ctx, t, ll, "udp", ":"+port)
+		wantOK(ctx, t, ll, "udp4", ":"+port)
+		wantOK(ctx, t, ll, "udp", "0.0.0.0:"+port)
+		wantOK(ctx, t, ll, "udp4", "0.0.0.0:"+port)
+		wantNG(ctx, t, ll, "udp6", ":"+port)
+		wantOK(ctx, t, ll, "udp", "[::]:"+port)
+	})
+
+	t.Run("ipv4", func(t *testing.T) {
+		conn, err := net.ListenPacket("udp4", "0.0.0.0:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+
+		f, err := conn.(interface{ File() (*os.File, error) }).File()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
+
+		ll := ListenSpecs{
+			listenSpec{
+				addr: "0.0.0.0:" + port,
+				fd:   f.Fd(),
+			},
+		}
+		wantOK(ctx, t, ll, "udp", ":"+port)
+		wantOK(ctx, t, ll, "udp4", ":"+port)
+		wantOK(ctx, t, ll, "udp", "0.0.0.0:"+port)
+		wantOK(ctx, t, ll, "udp4", "0.0.0.0:"+port)
+		wantNG(ctx, t, ll, "udp6", ":"+port)
+		wantOK(ctx, t, ll, "udp", "[::]:"+port)
+	})
+
+	t.Run("ipv4-loopback", func(t *testing.T) {
+		conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+
+		f, err := conn.(interface{ File() (*os.File, error) }).File()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
+
+		ll := ListenSpecs{
+			listenSpec{
+				addr: "127.0.0.1:" + port,
+				fd:   f.Fd(),
+			},
+		}
+		wantOK(ctx, t, ll, "udp", "127.0.0.1:"+port)
+		wantOK(ctx, t, ll, "udp4", "127.0.0.1:"+port)
+		wantOK(ctx, t, ll, "udp", "[::1]:"+port)
+	})
+
+	t.Run("ipv6", func(t *testing.T) {
+		conn, err := net.ListenPacket("udp6", ":0")
+		if err != nil {
+			t.Skip("IPv6 is not supported?")
+			return
+		}
+		defer conn.Close()
+
+		f, err := conn.(interface{ File() (*os.File, error) }).File()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
+
+		ll := ListenSpecs{
+			listenSpec{
+				addr: "[::]:" + port,
+				fd:   f.Fd(),
+			},
+		}
+		wantOK(ctx, t, ll, "udp", ":"+port)
+		wantOK(ctx, t, ll, "udp6", ":"+port)
+		wantOK(ctx, t, ll, "udp", "[::]:"+port)
+		wantOK(ctx, t, ll, "udp6", "[::]:"+port)
+		wantNG(ctx, t, ll, "udp", "0.0.0.0:"+port)
+		wantNG(ctx, t, ll, "udp4", ":"+port)
+	})
+
+	t.Run("ipv6-loopback", func(t *testing.T) {
+		conn, err := net.ListenPacket("udp6", "[::1]:0")
+		if err != nil {
+			t.Skip("IPv6 is not supported?")
+			return
+		}
+		defer conn.Close()
+
+		f, err := conn.(interface{ File() (*os.File, error) }).File()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
+
+		ll := ListenSpecs{
+			listenSpec{
+				addr: "[::1]:" + port,
+				fd:   f.Fd(),
+			},
+		}
+		wantOK(ctx, t, ll, "udp", "[::1]:"+port)
+		wantOK(ctx, t, ll, "udp6", "[::1]:"+port)
+		wantNG(ctx, t, ll, "udp", "127.0.0.1:"+port)
+	})
+}
+
 func TestPort(t *testing.T) {
 	cases := []struct {
 		in string
