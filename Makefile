@@ -2,7 +2,7 @@ GOVERSION=$(shell go version)
 GOOS=$(shell go env GOOS)
 GOARCH=$(shell go env GOARCH)
 VERSION=$(patsubst "%",%,$(lastword $(shell grep 'const Version' version.go)))
-ARTIFACTS_DIR=$(CURDIR)/artifacts/$(VERSION)
+ARTIFACTS_DIR=artifacts/$(VERSION)
 RELEASE_DIR=$(CURDIR)/release/$(VERSION)
 SRC_FILES=$(shell find . -type f -name '*.go')
 GITHUB_USERNAME=shogo82148
@@ -31,7 +31,7 @@ $(ARTIFACTS_DIR)/start_server_$(GOOS)_$(GOARCH):
 
 $(ARTIFACTS_DIR)/start_server_$(GOOS)_$(GOARCH)/start_server$(SUFFIX): $(ARTIFACTS_DIR)/start_server_$(GOOS)_$(GOARCH) $(SRC_FILES)
 	@echo " * Building binary for $(GOOS)/$(GOARCH)..."
-	@CGO_ENABLED=0 go build -o $@ github.com/shogo82148/server-starter/cmd/start_server
+	@CGO_ENABLED=0 ./run-in-docker.sh go build -o $@ github.com/shogo82148/server-starter/cmd/start_server
 
 build: $(ARTIFACTS_DIR)/start_server_$(GOOS)_$(GOARCH)/start_server$(SUFFIX)
 
