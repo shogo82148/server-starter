@@ -193,7 +193,7 @@ func Test_StartFail(t *testing.T) {
 		t.Errorf("want %s, got %s", "2", generation)
 	}
 
-	// wait until server succeds in reboot
+	// wait until server succeeds in reboot
 	time.Sleep(5 * time.Second)
 	generation = getGeneration()
 	if generation != "5" {
