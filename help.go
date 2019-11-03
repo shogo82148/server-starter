@@ -19,6 +19,7 @@ func showHelp() {
 		"    TCP port to listen to (if omitted, will not bind to any ports)\n",
 		"    If host is not specified, then the program will bind to the default address of IPv4 (\"0.0.0.0\").\n",
 		"    Square brackets should be used to specify an IPv6 address (e.g. --port=[::1]:8080)\n",
+		"    The command binds to UDP ports if the port numbers are prefixed by \"u\" (e.g., --port=u443).",
 		"\n",
 		"  --path=path:\n",
 		"    path at where to listen using unix socket (optional)\n",
