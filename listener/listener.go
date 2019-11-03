@@ -13,6 +13,7 @@ import (
 // ListenConfig is a generator of net.Listener.
 type ListenConfig interface {
 	Listen(ctx context.Context, network, address string) (net.Listener, error)
+	ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error)
 }
 
 // PortEnvName is the environment name for server_starter configures.
@@ -31,6 +32,9 @@ type ListenSpec interface {
 
 	// Listen creates a new Listener
 	Listen() (net.Listener, error)
+
+	// ListenPacket creates new PacketConn
+	ListenPacket() (net.PacketConn, error)
 
 	// Addr returns the address.
 	Addr() string
@@ -60,7 +64,7 @@ func (ll ListenSpecs) String() string {
 }
 
 // Listen announces on the local network address.
-// The network must be "tcp", "tcp4", "tcp6", "unix" or "unixpacket".
+// The network must be "tcp", "tcp4", "tcp6", "unix".
 func (ll ListenSpecs) Listen(ctx context.Context, network, address string) (net.Listener, error) {
 	var addrlist []string
 	switch network {
@@ -109,7 +113,6 @@ func (ll ListenSpecs) Listen(ctx context.Context, network, address string) (net.
 			}
 		}
 	case "unix":
-		addrlist = []string{address}
 		stat1, err := os.Stat(address)
 		if err != nil {
 			return nil, err
@@ -157,18 +160,102 @@ func (ll ListenSpecs) Listen(ctx context.Context, network, address string) (net.
 	return nil, fmt.Errorf("listener: address %s is not being bound to the server", address)
 }
 
+// ListenPacket announces on the local network address.
+// The network must be "udp", "udp4", "udp6".
+func (ll ListenSpecs) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
+	var addrlist []string
+	switch network {
+	case "udp", "udp4", "udp6":
+		var ips []net.IPAddr
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		portnum, err := net.DefaultResolver.LookupPort(ctx, network, port)
+		if err != nil {
+			return nil, err
+		}
+		port = strconv.Itoa(portnum)
+
+		if host != "" {
+			ips, err = net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			if network == "udp" || network == "udp4" {
+				ips = append(ips, net.IPAddr{IP: net.IPv4zero})
+			}
+			if network == "udp" || network == "udp6" {
+				ips = append(ips, net.IPAddr{IP: net.IPv6unspecified})
+			}
+		}
+		for _, ip := range ips {
+			v4 := ip.IP.To4()
+			if v4 != nil && (network == "udp" || network == "udp4") {
+				addrlist = append(addrlist, net.JoinHostPort(v4.String(), port))
+			}
+
+			v6 := ip.IP.To16()
+			if v6 != nil && (network == "udp" || v4 == nil && network == "udp6") {
+				addrlist = append(addrlist, net.JoinHostPort(v6.String(), port))
+			}
+
+			// fallback v6 to v4
+			if (network == "udp" || network == "udp4") && ip.IP.IsUnspecified() {
+				addrlist = append(addrlist, port, "0.0.0.0:"+port)
+			}
+			if (network == "udp" || network == "udp4") && ip.IP.IsLoopback() {
+				addrlist = append(addrlist, "127.0.0.1:"+port)
+			}
+		}
+	default:
+		return nil, net.UnknownNetworkError(network)
+	}
+
+	for _, l := range ll {
+		a := l.Addr()
+		for _, addr := range addrlist {
+			if addr != a {
+				continue
+			}
+			conn, err := l.ListenPacket()
+			if err != nil {
+				continue
+			}
+			if _, ok := conn.(*net.UDPConn); !ok {
+				conn.Close()
+				continue
+			}
+			return conn, nil
+		}
+	}
+
+	return nil, fmt.Errorf("listener: address %s is not being bound to the server", address)
+}
+
 // ListenAll announces on the local network address.
 func (ll ListenSpecs) ListenAll(ctx context.Context) ([]net.Listener, error) {
 	ret := make([]net.Listener, 0, len(ll))
 	for _, lc := range ll {
 		l, err := lc.Listen()
 		if err != nil {
-			for _, l := range ret {
-				l.Close()
-			}
-			return nil, err
+			continue
 		}
 		ret = append(ret, l)
+	}
+	return ret, nil
+}
+
+// ListenPacketAll announces on the local network address.
+func (ll ListenSpecs) ListenPacketAll(ctx context.Context) ([]net.PacketConn, error) {
+	ret := make([]net.PacketConn, 0, len(ll))
+	for _, lc := range ll {
+		conn, err := lc.ListenPacket()
+		if err != nil {
+			continue
+		}
+		ret = append(ret, conn)
 	}
 	return ret, nil
 }
@@ -192,6 +279,10 @@ func (l listenSpec) Fd() uintptr {
 
 func (l listenSpec) Listen() (net.Listener, error) {
 	return net.FileListener(os.NewFile(l.fd, l.addr))
+}
+
+func (l listenSpec) ListenPacket() (net.PacketConn, error) {
+	return net.FilePacketConn(os.NewFile(l.fd, l.addr))
 }
 
 func parseListenTargets(str string, ok bool) (ListenSpecs, error) {
