@@ -321,10 +321,7 @@ RETRY:
 			return nil, errShutdown
 		}
 		s.logf("failed to exec %s:%s", s.Command, err)
-		timer := time.NewTimer(s.interval())
-		select {
-		case <-timer.C:
-		}
+		time.Sleep(s.interval())
 		goto RETRY
 	}
 	s.logf("starting new worker %d", w.Pid())
@@ -337,16 +334,11 @@ RETRY:
 			return nil, errShutdown
 		}
 		state = w.cmd.ProcessState
-	case <-timer.C:
-		timer.Reset(0)
-	}
-
-	if state != nil {
 		s.logf("new worker %d seems to have failed to start, exit status: %d", w.Pid(), state.ExitCode())
 		<-timer.C
 		goto RETRY
+	case <-timer.C:
 	}
-	timer.Stop()
 
 	// notify that starting new worker succeed to the restarter.
 	if ch := s.getChRestarter(); ch != nil {
