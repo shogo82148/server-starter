@@ -597,6 +597,13 @@ func (s *Starter) listen() error {
 			}
 			continue
 		}
+		if err := os.Chmod(path, 0777); err != nil {
+			s.logf("%s: failed to chmod: %s", path, err)
+			if errListen == nil {
+				errListen = err
+			}
+			continue
+		}
 		socket, ok := l.(socket)
 		if !ok {
 			s.logf("%s: fail to get file description", path)
