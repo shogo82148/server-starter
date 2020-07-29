@@ -6,7 +6,7 @@ based on [lestrrat-go/server-starter](https://github.com/lestrrat-go/server-star
 
 [![GitHub Actions status](https://github.com/shogo82148/server-starter/workflows/Test/badge.svg)](https://github.com/shogo82148/server-starter/actions)
 
-[![GoDoc](https://godoc.org/github.com/shogo82148/server-starter?status.svg)](https://godoc.org/github.com/shogo82148/server-starter)
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/shogo82148/server-starter?tab=doc)](https://pkg.go.dev/github.com/shogo82148/server-starter?tab=doc)
 
 ## DESCRIPTION
 
