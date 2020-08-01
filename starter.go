@@ -876,7 +876,12 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 		}
 	}
 
-	return s.logger.Shutdown(ctx)
+	// gracefully shutdown the logger
+	if err := s.logger.Shutdown(ctx); err != nil {
+		return err
+	}
+
+	return s.logger.Close()
 }
 
 func (s *Starter) shutdownBySignal(recv os.Signal) {
