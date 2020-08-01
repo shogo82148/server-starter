@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -93,9 +92,7 @@ type Starter struct {
 	// this is a wrapper command that reads the pid of the start_server process from --pid-file, sends SIGTERM to the process.
 	Stop bool
 
-	Logger   *log.Logger
-	mylogger *log.Logger
-	logfile  io.WriteCloser
+	logger logger
 
 	sockets    []socket
 	generation int
@@ -199,39 +196,22 @@ func (s *Starter) openPidFile() error {
 
 func (s *Starter) openLogFile() error {
 	if s.LogFile == "" {
+		s.logger = newStdLogger()
 		return nil
 	}
 	if s.LogFile[0] == '|' {
-		ctx, cancel := context.WithCancel(context.Background())
-		cmd := exec.CommandContext(ctx, "sh", "-c", s.LogFile[1:])
-
-		// set log output the stdin of the logger process
-		stdin, err := cmd.StdinPipe()
-		if err != nil {
-			cancel()
-			return nil
-		}
-		s.logfile = stdin
-
-		// configure stdout and stderr of the logger process
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		// start the logger process
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			defer cancel()
-			cmd.Run()
-		}()
-	} else {
-		f, err := os.OpenFile(s.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		l, err := newCmdLogger(s.LogFile[1:])
 		if err != nil {
 			return err
 		}
-		s.logfile = f
+		s.logger = l
+		return nil
 	}
-	s.mylogger = log.New(s.logfile, "", 0)
+	l, err := newFileLogger(s.LogFile)
+	if err != nil {
+		return err
+	}
+	s.logger = l
 	return nil
 }
 
@@ -397,13 +377,8 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	s.generation++
 	ctx, cancel := context.WithCancel(s.ctx)
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
-	if s.logfile != nil {
-		cmd.Stdout = s.logfile
-		cmd.Stderr = s.logfile
-	} else {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
+	cmd.Stdout = s.logger.Stdout()
+	cmd.Stderr = s.logger.Stderr()
 	cmd.ExtraFiles = files
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("%s=%s", PortEnvName, strings.Join(ports, ";")))
@@ -886,10 +861,13 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 		}()
 	}
 
+	// notify shutdown signal to the workers
 	workers := s.listWorkers()
 	for _, w := range workers {
 		w.Signal(s.signalOnTERM(), workerStateShutdown)
 	}
+
+	// wait for shutting down the workers
 	for _, w := range workers {
 		select {
 		case <-w.done:
@@ -897,10 +875,14 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
-	return s.Close()
+
+	return s.logger.Shutdown(ctx)
 }
 
 func (s *Starter) shutdownBySignal(recv os.Signal) {
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	defer cancel()
+
 	// stop starting new worker
 	if s.shutdown.TrySet(true) {
 		// wait for a worker that is currently starting
@@ -915,6 +897,7 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 		}()
 	}
 
+	// notify shutdown signal to the workers
 	signal := os.Signal(syscall.SIGTERM)
 	if recv == syscall.SIGTERM {
 		signal = s.signalOnTERM()
@@ -929,10 +912,24 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 		buf.WriteString(",none")
 	}
 	s.logf("received %s, sending %s to all workers:%s", recv, signalToName(signal), buf.String()[1:])
-
 	for _, w := range workers {
 		w.Signal(signal, workerStateShutdown)
 	}
+
+	// wait for shutting down the workers
+	for _, w := range workers {
+		select {
+		case <-w.done:
+		case <-ctx.Done():
+			s.Close()
+			s.logf("exiting")
+			return
+		}
+	}
+
+	// gracefully shutdown the logger
+	s.logger.Shutdown(ctx)
+
 	s.Close()
 	s.logf("exiting")
 }
@@ -944,9 +941,6 @@ func (s *Starter) Close() error {
 }
 
 func (s *Starter) close() {
-	if s.logfile != nil {
-		s.logfile.Close()
-	}
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -957,6 +951,7 @@ func (s *Starter) close() {
 		}
 	}
 	s.wg.Wait()
+	s.logger.Close()
 	if f := s.pidFile; f != nil {
 		os.Remove(f.Name())
 		f.Close()
@@ -964,13 +959,7 @@ func (s *Starter) close() {
 }
 
 func (s *Starter) logf(format string, args ...interface{}) {
-	if s.mylogger != nil {
-		s.mylogger.Printf(format, args...)
-	} else if s.Logger != nil {
-		s.Logger.Printf(format, args...)
-	} else {
-		log.Printf(format, args...)
-	}
+	s.logger.Logf(format, args...)
 }
 
 func (s *Starter) restart() error {
