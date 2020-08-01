@@ -123,6 +123,7 @@ type cmdLogger struct {
 func newCmdLogger(command string) (logger, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "sh", "-c", strings.TrimSpace(command))
+	cmd.Env = os.Environ()
 
 	// make a logger process a group leader
 	// https://junkyard.song.mu/slides/gocon2019-spring/#48 (written in Japanese)
