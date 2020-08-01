@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"syscall"
 )
 
@@ -117,7 +116,7 @@ type cmdLogger struct {
 	done   chan struct{}
 	cmd    *exec.Cmd
 
-	mu     sync.Mutex
+	closed atomicBool
 	pr, pw *os.File
 }
 
@@ -178,17 +177,16 @@ func (l *cmdLogger) Logf(format string, args ...interface{}) {
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	select {
-	case <-l.done:
+	if l.closed.IsSet() {
 		os.Stderr.Write(buf.Bytes())
-	default:
+	} else {
 		l.pw.Write(buf.Bytes())
 	}
 }
 
 func (l *cmdLogger) Shutdown(ctx context.Context) error {
+	l.closePipe()
+
 	// send SIGTERM signal to the process group
 	// https://junkyard.song.mu/slides/gocon2019-spring/#53 (written in Japanese)
 	// https://github.com/Songmu/timeout/blob/9710262dc02f66fdd69a6cd4c8143204006d5843/timeout_unix.go#L21-L35
@@ -209,6 +207,7 @@ func (l *cmdLogger) Shutdown(ctx context.Context) error {
 }
 
 func (l *cmdLogger) Close() error {
+	l.closePipe()
 	select {
 	case <-l.done:
 	default:
@@ -224,9 +223,13 @@ func (l *cmdLogger) wait() {
 	l.cmd.Wait()
 
 	// notify the logger process is stopped.
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.pr.Close()
-	l.pw.Close()
+	l.closePipe()
 	close(l.done)
+}
+
+func (l *cmdLogger) closePipe() {
+	if l.closed.TrySet(true) {
+		l.pw.Close()
+		l.pr.Close()
+	}
 }
