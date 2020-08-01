@@ -204,12 +204,20 @@ func (s *Starter) openLogFile() error {
 	if s.LogFile[0] == '|' {
 		ctx, cancel := context.WithCancel(context.Background())
 		cmd := exec.CommandContext(ctx, "sh", "-c", s.LogFile[1:])
+
+		// set log output the stdin of the logger process
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
 			cancel()
 			return nil
 		}
 		s.logfile = stdin
+
+		// configure stdout and stderr of the logger process
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		// start the logger process
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
