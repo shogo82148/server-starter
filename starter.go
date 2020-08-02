@@ -881,7 +881,7 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 		return err
 	}
 
-	return s.logger.Close()
+	return s.Close()
 }
 
 func (s *Starter) shutdownBySignal(recv os.Signal) {
