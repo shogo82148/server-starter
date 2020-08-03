@@ -3,12 +3,14 @@ package starter
 import (
 	"bytes"
 	"context"
+	"io"
 	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -607,5 +609,81 @@ func Test_EnvDir(t *testing.T) {
 	v = getEnv()
 	if v != "not found!" {
 		t.Errorf("want not found!, got %s", v)
+	}
+}
+
+func Test_Logger(t *testing.T) {
+	dir, err := ioutil.TempDir("", "server-starter-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %s", err)
+	}
+	defer os.RemoveAll(dir)
+
+	// mock stderr
+	stderr := os.Stderr
+	defer func() {
+		os.Stderr = stderr
+	}()
+	var wg sync.WaitGroup
+	var buf bytes.Buffer
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = pw
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer pr.Close()
+		if _, err := io.Copy(&buf, pr); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	// build the server
+	serverBinFile := filepath.Join(dir, "server")
+	cmd := exec.Command("go", "build", "-o", serverBinFile, "testdata/logger/server/main.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/server/main.go", err, output)
+	}
+
+	// build the logger
+	loggerBinFile := filepath.Join(dir, "logger")
+	cmd = exec.Command("go", "build", "-o", loggerBinFile, "testdata/logger/logger/main.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/logger/main.go", err, output)
+	}
+
+	logFile := filepath.Join(dir, "server.log")
+
+	sd := &Starter{
+		Command: serverBinFile,
+		Ports:   []string{"0"},
+		LogFile: "|" + loggerBinFile + " " + logFile,
+	}
+	go func() {
+		if err := sd.Run(); err != nil {
+			t.Errorf("sd.Run() failed: %s", err)
+		}
+	}()
+
+	time.Sleep(500 * time.Millisecond) // wait for starting worker
+
+	// shutdown
+	func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := sd.Shutdown(ctx); err != nil {
+			t.Errorf("sd.Shutdown() failed: %s", err)
+		}
+		pw.Close()
+		wg.Wait()
+	}()
+
+	t.Logf("stderr: %s", buf.String())
+	if log, err := ioutil.ReadFile(logFile); err == nil {
+		t.Logf("logfile: %s", string(log))
+	} else {
+		t.Error(err)
 	}
 }

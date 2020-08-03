@@ -122,7 +122,8 @@ type cmdLogger struct {
 
 func newCmdLogger(command string) (logger, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "sh", "-c", strings.TrimSpace(command))
+	command = strings.TrimSpace(command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Env = os.Environ()
 
 	// make a logger process a group leader
@@ -141,6 +142,12 @@ func newCmdLogger(command string) (logger, error) {
 	// configure stdout and stderr of the logger process
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		cancel()
+		pr.Close()
+		pw.Close()
+		return nil, err
+	}
 
 	l := &cmdLogger{
 		ctx:    ctx,
@@ -149,12 +156,6 @@ func newCmdLogger(command string) (logger, error) {
 		cmd:    cmd,
 		pr:     pr,
 		pw:     pw,
-	}
-	if err := cmd.Run(); err != nil {
-		cancel()
-		pr.Close()
-		pw.Close()
-		return nil, err
 	}
 	go l.wait()
 	return l, nil
@@ -188,15 +189,12 @@ func (l *cmdLogger) Logf(format string, args ...interface{}) {
 func (l *cmdLogger) Shutdown(ctx context.Context) error {
 	l.closePipe()
 
+	// notify that shutting down is started to the logger
 	// send SIGTERM signal to the process group
 	// https://junkyard.song.mu/slides/gocon2019-spring/#53 (written in Japanese)
 	// https://github.com/Songmu/timeout/blob/9710262dc02f66fdd69a6cd4c8143204006d5843/timeout_unix.go#L21-L35
-	if err := syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM); err != nil {
-		return err
-	}
-	if err := syscall.Kill(-l.cmd.Process.Pid, syscall.SIGCONT); err != nil {
-		return err
-	}
+	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM) // ignore errors because the logger already stopped
+	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGCONT)
 
 	// wait for shutdown
 	select {
@@ -204,6 +202,7 @@ func (l *cmdLogger) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	l.cancel()
 	return nil
 }
 

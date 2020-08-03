@@ -100,7 +100,12 @@ type Starter struct {
 	cancel     context.CancelFunc
 	pidFile    *os.File
 
-	wg          sync.WaitGroup
+	// wait group for workers
+	wgWorker sync.WaitGroup
+
+	// wait group for server starter
+	wg sync.WaitGroup
+
 	mu          sync.RWMutex
 	shutdown    atomicBool
 	chreload    chan struct{}
@@ -174,6 +179,7 @@ func (s *Starter) Run() error {
 	// enable reload
 	s.unlockReload()
 
+	s.wgWorker.Wait()
 	s.wg.Wait()
 	return nil
 }
@@ -231,7 +237,11 @@ func (s *Starter) waitSignal() {
 			s.logf("received HUP, spawning a new worker")
 			go s.Reload()
 		default:
-			go s.shutdownBySignal(sig)
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				s.shutdownBySignal(sig)
+			}()
 		}
 	}
 }
@@ -407,12 +417,12 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 }
 
 func (w *worker) Wait() {
-	w.starter.wg.Add(1)
+	w.starter.wgWorker.Add(1)
 	go w.wait()
 }
 
 func (w *worker) wait() {
-	defer w.starter.wg.Done()
+	defer w.starter.wgWorker.Done()
 	defer w.close()
 	w.cmd.Wait()
 }
@@ -420,13 +430,13 @@ func (w *worker) wait() {
 // start to watch the worker itself.
 // after call the Watch, the worker watches its process and restart itself if necessary.
 func (w *worker) Watch() {
-	w.starter.wg.Add(1)
+	w.starter.wgWorker.Add(1)
 	go w.watch()
 }
 
 func (w *worker) watch() {
 	s := w.starter
-	defer s.wg.Done()
+	defer s.wgWorker.Done()
 	state := workerStateInit
 	for {
 		select {
@@ -441,9 +451,9 @@ func (w *worker) watch() {
 			switch state {
 			case workerStateInit:
 				s.logf("worker %d died unexpectedly with status %d, restarting", w.Pid(), st.ExitCode())
-				w.starter.wg.Add(1)
+				w.starter.wgWorker.Add(1)
 				go func() {
-					defer s.wg.Done()
+					defer s.wgWorker.Done()
 					if !s.tryToLockReload() {
 						return // restarting proccess is already started, skip
 					}
@@ -845,6 +855,9 @@ func (s *Starter) updateStatusLocked() {
 
 // Shutdown terminates all workers.
 func (s *Starter) Shutdown(ctx context.Context) error {
+	s.wg.Add(1)
+	defer s.wg.Done()
+
 	// stop starting new worker
 	if s.shutdown.TrySet(true) {
 		// wait for a worker that is currently starting
@@ -875,6 +888,7 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+	s.wgWorker.Wait()
 
 	// gracefully shutdown the logger
 	if err := s.logger.Shutdown(ctx); err != nil {
@@ -949,14 +963,14 @@ func (s *Starter) close() {
 	if s.cancel != nil {
 		s.cancel()
 	}
+	s.wgWorker.Wait()
+	s.logger.Close()
 	for _, sock := range s.getSockets() {
 		sock.Close()
 		if l, ok := sock.(*net.UnixListener); ok {
 			os.Remove(l.Addr().String())
 		}
 	}
-	s.wg.Wait()
-	s.logger.Close()
 	if f := s.pidFile; f != nil {
 		os.Remove(f.Name())
 		f.Close()
