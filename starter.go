@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -93,9 +92,7 @@ type Starter struct {
 	// this is a wrapper command that reads the pid of the start_server process from --pid-file, sends SIGTERM to the process.
 	Stop bool
 
-	Logger   *log.Logger
-	mylogger *log.Logger
-	logfile  io.WriteCloser
+	logger logger
 
 	sockets    []socket
 	generation int
@@ -103,7 +100,12 @@ type Starter struct {
 	cancel     context.CancelFunc
 	pidFile    *os.File
 
-	wg          sync.WaitGroup
+	// wait group for workers
+	wgWorker sync.WaitGroup
+
+	// wait group for server starter
+	wg sync.WaitGroup
+
 	mu          sync.RWMutex
 	shutdown    atomicBool
 	chreload    chan struct{}
@@ -177,6 +179,7 @@ func (s *Starter) Run() error {
 	// enable reload
 	s.unlockReload()
 
+	s.wgWorker.Wait()
 	s.wg.Wait()
 	return nil
 }
@@ -199,32 +202,42 @@ func (s *Starter) openPidFile() error {
 
 func (s *Starter) openLogFile() error {
 	if s.LogFile == "" {
+		s.logger = newStdLogger()
 		return nil
 	}
 	if s.LogFile[0] == '|' {
-		ctx, cancel := context.WithCancel(context.Background())
-		cmd := exec.CommandContext(ctx, "sh", "-c", s.LogFile[1:])
-		stdin, err := cmd.StdinPipe()
-		if err != nil {
-			cancel()
-			return nil
-		}
-		s.logfile = stdin
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			defer cancel()
-			cmd.Run()
-		}()
-	} else {
-		f, err := os.OpenFile(s.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		l, err := newCmdLogger(s.LogFile[1:])
 		if err != nil {
 			return err
 		}
-		s.logfile = f
+		s.logger = l
+		go s.watchLogger()
+		return nil
 	}
-	s.mylogger = log.New(s.logfile, "", 0)
+	l, err := newFileLogger(s.LogFile)
+	if err != nil {
+		return err
+	}
+	s.logger = l
 	return nil
+}
+
+func (s *Starter) watchLogger() {
+	<-s.logger.Done()
+
+	if s.shutdown.IsSet() {
+		// It is in the shutting down process.
+		// this is the expected behavior.
+		return
+	}
+
+	s.logf("the logger dies unexpectedly. shutting down...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	s.Shutdown(ctx)
+
+	s.logf("exit.")
 }
 
 func (s *Starter) waitSignal() {
@@ -243,7 +256,11 @@ func (s *Starter) waitSignal() {
 			s.logf("received HUP, spawning a new worker")
 			go s.Reload()
 		default:
-			go s.shutdownBySignal(sig)
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				s.shutdownBySignal(sig)
+			}()
 		}
 	}
 }
@@ -389,13 +406,8 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	s.generation++
 	ctx, cancel := context.WithCancel(s.ctx)
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
-	if s.logfile != nil {
-		cmd.Stdout = s.logfile
-		cmd.Stderr = s.logfile
-	} else {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
+	cmd.Stdout = s.logger.Stdout()
+	cmd.Stderr = s.logger.Stderr()
 	cmd.ExtraFiles = files
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("%s=%s", PortEnvName, strings.Join(ports, ";")))
@@ -424,12 +436,12 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 }
 
 func (w *worker) Wait() {
-	w.starter.wg.Add(1)
+	w.starter.wgWorker.Add(1)
 	go w.wait()
 }
 
 func (w *worker) wait() {
-	defer w.starter.wg.Done()
+	defer w.starter.wgWorker.Done()
 	defer w.close()
 	w.cmd.Wait()
 }
@@ -437,13 +449,13 @@ func (w *worker) wait() {
 // start to watch the worker itself.
 // after call the Watch, the worker watches its process and restart itself if necessary.
 func (w *worker) Watch() {
-	w.starter.wg.Add(1)
+	w.starter.wgWorker.Add(1)
 	go w.watch()
 }
 
 func (w *worker) watch() {
 	s := w.starter
-	defer s.wg.Done()
+	defer s.wgWorker.Done()
 	state := workerStateInit
 	for {
 		select {
@@ -458,9 +470,9 @@ func (w *worker) watch() {
 			switch state {
 			case workerStateInit:
 				s.logf("worker %d died unexpectedly with status %d, restarting", w.Pid(), st.ExitCode())
-				w.starter.wg.Add(1)
+				w.starter.wgWorker.Add(1)
 				go func() {
-					defer s.wg.Done()
+					defer s.wgWorker.Done()
 					if !s.tryToLockReload() {
 						return // restarting proccess is already started, skip
 					}
@@ -862,6 +874,9 @@ func (s *Starter) updateStatusLocked() {
 
 // Shutdown terminates all workers.
 func (s *Starter) Shutdown(ctx context.Context) error {
+	s.wg.Add(1)
+	defer s.wg.Done()
+
 	// stop starting new worker
 	if s.shutdown.TrySet(true) {
 		// wait for a worker that is currently starting
@@ -878,10 +893,13 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 		}()
 	}
 
+	// notify shutdown signal to the workers
 	workers := s.listWorkers()
 	for _, w := range workers {
 		w.Signal(s.signalOnTERM(), workerStateShutdown)
 	}
+
+	// wait for shutting down the workers
 	for _, w := range workers {
 		select {
 		case <-w.done:
@@ -889,10 +907,20 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+	s.wgWorker.Wait()
+
+	// gracefully shutdown the logger
+	if err := s.logger.Shutdown(ctx); err != nil {
+		return err
+	}
+
 	return s.Close()
 }
 
 func (s *Starter) shutdownBySignal(recv os.Signal) {
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	defer cancel()
+
 	// stop starting new worker
 	if s.shutdown.TrySet(true) {
 		// wait for a worker that is currently starting
@@ -907,6 +935,7 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 		}()
 	}
 
+	// notify shutdown signal to the workers
 	signal := os.Signal(syscall.SIGTERM)
 	if recv == syscall.SIGTERM {
 		signal = s.signalOnTERM()
@@ -921,10 +950,24 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 		buf.WriteString(",none")
 	}
 	s.logf("received %s, sending %s to all workers:%s", recv, signalToName(signal), buf.String()[1:])
-
 	for _, w := range workers {
 		w.Signal(signal, workerStateShutdown)
 	}
+
+	// wait for shutting down the workers
+	for _, w := range workers {
+		select {
+		case <-w.done:
+		case <-ctx.Done():
+			s.Close()
+			s.logf("exiting")
+			return
+		}
+	}
+
+	// gracefully shutdown the logger
+	s.logger.Shutdown(ctx)
+
 	s.Close()
 	s.logf("exiting")
 }
@@ -936,19 +979,17 @@ func (s *Starter) Close() error {
 }
 
 func (s *Starter) close() {
-	if s.logfile != nil {
-		s.logfile.Close()
-	}
 	if s.cancel != nil {
 		s.cancel()
 	}
+	s.wgWorker.Wait()
+	s.logger.Close()
 	for _, sock := range s.getSockets() {
 		sock.Close()
 		if l, ok := sock.(*net.UnixListener); ok {
 			os.Remove(l.Addr().String())
 		}
 	}
-	s.wg.Wait()
 	if f := s.pidFile; f != nil {
 		os.Remove(f.Name())
 		f.Close()
@@ -956,13 +997,7 @@ func (s *Starter) close() {
 }
 
 func (s *Starter) logf(format string, args ...interface{}) {
-	if s.mylogger != nil {
-		s.mylogger.Printf(format, args...)
-	} else if s.Logger != nil {
-		s.Logger.Printf(format, args...)
-	} else {
-		log.Printf(format, args...)
-	}
+	s.logger.Logf(format, args...)
 }
 
 func (s *Starter) restart() error {
