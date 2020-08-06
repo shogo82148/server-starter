@@ -11,7 +11,7 @@ help: ## Show this text.
 	# https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-all: build-linux-amd64 build-darwin-amd64 ## Build binaries.
+all: build-linux-amd64 build-linux-arm64 build-darwin-amd64 ## Build binaries.
 
 .PHONY: all test clean help
 
