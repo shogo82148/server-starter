@@ -207,7 +207,7 @@ func (l *cmdLogger) Shutdown(ctx context.Context) error {
 	// send SIGTERM signal to the process group
 	// https://junkyard.song.mu/slides/gocon2019-spring/#53 (written in Japanese)
 	// https://github.com/Songmu/timeout/blob/9710262dc02f66fdd69a6cd4c8143204006d5843/timeout_unix.go#L21-L35
-	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM) // ignore errors because the logger already stopped
+	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM) // ignore errors because the logger maybe already stopped
 	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGCONT)
 
 	// wait until the logger receives the signal
