@@ -693,3 +693,34 @@ func Test_Logger(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func Test_LoggerDies(t *testing.T) {
+	dir, err := ioutil.TempDir("", "server-starter-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %s", err)
+	}
+	defer os.RemoveAll(dir)
+
+	// build the server
+	serverBinFile := filepath.Join(dir, "server")
+	cmd := exec.Command("go", "build", "-o", serverBinFile, "testdata/logger/server/main.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/server/main.go", err, output)
+	}
+
+	// build the logger
+	loggerBinFile := filepath.Join(dir, "sleep")
+	cmd = exec.Command("go", "build", "-o", loggerBinFile, "testdata/logger/sleep/main.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/sleep/main.go", err, output)
+	}
+
+	sd := &Starter{
+		Command: serverBinFile,
+		Ports:   []string{"0"},
+		LogFile: "|" + loggerBinFile,
+	}
+	if err := sd.Run(); err != nil {
+		t.Errorf("sd.Run() failed: %s", err)
+	}
+}

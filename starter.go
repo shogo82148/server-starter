@@ -211,6 +211,7 @@ func (s *Starter) openLogFile() error {
 			return err
 		}
 		s.logger = l
+		go s.watchLogger()
 		return nil
 	}
 	l, err := newFileLogger(s.LogFile)
@@ -219,6 +220,18 @@ func (s *Starter) openLogFile() error {
 	}
 	s.logger = l
 	return nil
+}
+
+func (s *Starter) watchLogger() {
+	<-s.logger.Done()
+
+	s.logf("the logger dies unexpectedly. shutting down...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	s.Shutdown(ctx)
+
+	s.logf("exit.")
 }
 
 func (s *Starter) waitSignal() {
