@@ -671,7 +671,7 @@ func Test_Logger(t *testing.T) {
 
 	// shutdown
 	func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if err := sd.Shutdown(ctx); err != nil {
 			t.Errorf("sd.Shutdown() failed: %s", err)
@@ -680,7 +680,13 @@ func Test_Logger(t *testing.T) {
 		wg.Wait()
 	}()
 
-	t.Logf("stderr: %s", buf.String())
+	want := "logger: started\n" +
+		"logger: received EOF\n" +
+		"logger: received terminated\n"
+	if buf.String() != want {
+		t.Errorf("want %q, got %q", want, buf.String())
+	}
+
 	if log, err := ioutil.ReadFile(logFile); err == nil {
 		t.Logf("logfile: %s", string(log))
 	} else {

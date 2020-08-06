@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // logger is an interface of server-starter's logger.
@@ -189,6 +190,19 @@ func (l *cmdLogger) Logf(format string, args ...interface{}) {
 func (l *cmdLogger) Shutdown(ctx context.Context) error {
 	l.closePipe()
 
+	// wait until the logger receives EOF
+	t := time.NewTimer(10 * time.Second)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		// timeout
+	case <-l.done:
+		l.cancel()
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
 	// notify that shutting down is started to the logger
 	// send SIGTERM signal to the process group
 	// https://junkyard.song.mu/slides/gocon2019-spring/#53 (written in Japanese)
@@ -196,7 +210,7 @@ func (l *cmdLogger) Shutdown(ctx context.Context) error {
 	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM) // ignore errors because the logger already stopped
 	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGCONT)
 
-	// wait for shutdown
+	// wait until the logger receives the signal
 	select {
 	case <-l.done:
 	case <-ctx.Done():
