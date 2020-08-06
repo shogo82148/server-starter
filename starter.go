@@ -225,6 +225,12 @@ func (s *Starter) openLogFile() error {
 func (s *Starter) watchLogger() {
 	<-s.logger.Done()
 
+	if s.shutdown.IsSet() {
+		// It is in the shutting down process.
+		// this is the expected behavior.
+		return
+	}
+
 	s.logf("the logger dies unexpectedly. shutting down...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
