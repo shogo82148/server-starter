@@ -11,7 +11,7 @@ help: ## Show this text.
 	# https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-all: build-linux-amd64 build-darwin-amd64 ## Build binaries.
+all: build-linux-amd64 build-linux-arm64 build-darwin-amd64 ## Build binaries.
 
 .PHONY: all test clean help
 
@@ -24,7 +24,7 @@ clean: ## Remove built files.
 
 ##### build settings
 
-.PHONY: build build-linux-amd64 build-darwin-amd64
+.PHONY: build build-linux-amd64 build-linux-arm64 build-darwin-amd64
 
 $(ARTIFACTS_DIR)/start_server_$(GOOS)_$(GOARCH):
 	@mkdir -p $@
@@ -37,6 +37,9 @@ build: $(ARTIFACTS_DIR)/start_server_$(GOOS)_$(GOARCH)/start_server$(SUFFIX)
 
 build-linux-amd64:
 	@$(MAKE) build GOOS=linux GOARCH=amd64
+
+build-linux-arm64:
+	@$(MAKE) build GOOS=linux GOARCH=arm64
 
 build-darwin-amd64:
 	@$(MAKE) build GOOS=darwin GOARCH=amd64
@@ -53,8 +56,11 @@ $(RELEASE_DIR)/start_server_$(GOOS)_$(GOARCH):
 release-linux-amd64:
 	@$(MAKE) release-targz GOOS=linux GOARCH=amd64
 
+release-linux-arm64:
+	@$(MAKE) release-targz GOOS=linux GOARCH=arm64
+
 release-darwin-amd64:
-	@$(MAKE) release-zip GOOS=darwin GOARCH=amd64
+	@$(MAKE) release-targz GOOS=darwin GOARCH=amd64
 
 release-targz: build $(RELEASE_DIR)/start_server_$(GOOS)_$(GOARCH)
 	@echo " * Creating tar.gz for $(GOOS)/$(GOARCH)"
@@ -64,7 +70,7 @@ release-zip: build $(RELEASE_DIR)/start_server_$(GOOS)_$(GOARCH)
 	@echo " * Creating zip for $(GOOS)/$(GOARCH)"
 	cd $(ARTIFACTS_DIR) && zip -9 $(RELEASE_DIR)/start_server_$(GOOS)_$(GOARCH).zip start_server_$(GOOS)_$(GOARCH)/*
 
-release-files:release-linux-amd64 release-darwin-amd64 ## make release archive
+release-files: release-linux-amd64 release-linux-arm64 release-darwin-amd64 ## make release archive
 
 release-upload: release-files ## upload to GitHub
 	ghr -u $(GITHUB_USERNAME) --draft --replace v$(VERSION) $(RELEASE_DIR)
