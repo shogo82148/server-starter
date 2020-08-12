@@ -6,4 +6,4 @@ docker run --rm -it \
     -e "GOOS=${GOOS:-linux}" -e "GOARCH=${GOARCH:-amd64}" -e "CGO_ENABLED=${CGO_ENABLED:-1}" \
     -v "$CURRENT/.mod":/go/pkg/mod \
     -v "$CURRENT":/go/src/github.com/shogo82148/server-starter \
-    -w /go/src/github.com/shogo82148/server-starter golang:1.14.7 "$@"
+    -w /go/src/github.com/shogo82148/server-starter golang:1.15.0 "$@"
