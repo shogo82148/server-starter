@@ -22,7 +22,7 @@ By using ```start_server``` it is much easier to write a hot-deployable server. 
 
 - receive file descriptors to listen to through an environment variable - perform a graceful shutdown when receiving SIGTERM
 
-Many PSGI servers support this. If you want your Go program to support it, you can look under the [listener](https://github.com/shogo82148/server-starter/tree/master/listener) directory for an implementation that also fills the ```net.Listener``` interface.
+Many PSGI servers support this. If you want your Go program to support it, you can look under the [listener](https://github.com/shogo82148/server-starter/tree/main/listener) directory for an implementation that also fills the ```net.Listener``` interface.
 
 ## INSTALLATION
 
