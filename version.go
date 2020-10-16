@@ -1,4 +1,4 @@
 package starter
 
 // Version is the version of start_server.
-const Version = "0.0.5"
+const Version = "0.0.6"
