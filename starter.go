@@ -125,6 +125,9 @@ func (s *Starter) Run() error {
 		showHelp()
 		return nil
 	}
+	if err := s.openLogFile(); err != nil {
+		return err
+	}
 	if s.Restart {
 		return s.restart()
 	}
@@ -136,9 +139,6 @@ func (s *Starter) Run() error {
 	}
 	if s.Command == "" {
 		return errors.New("command is required")
-	}
-	if err := s.openLogFile(); err != nil {
-		return err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
