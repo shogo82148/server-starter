@@ -14,9 +14,11 @@ builds:
     goarch:
       - amd64
       - arm64
+    binary: start_server
 archives:
   - builds:
       - "cli"
+    name_template: "start_server_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 checksum:
   name_template: "checksums.txt"
 snapshot:
