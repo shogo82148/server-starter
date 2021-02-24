@@ -4,12 +4,25 @@ before:
   hooks:
     - go mod download
 builds:
-  - id: "cli"
+  - id: "linux"
     env:
       - CGO_ENABLED=0
     main: ./cmd/start_server/main.go
     goos:
       - linux
+    goarch:
+      - amd64
+      - arm64
+    binary: start_server
+    ldflags:
+      - -s -w
+      - -X github.com/shogo82148/server-starter.version={{.Version}}
+      - -X github.com/shogo82148/server-starter.commit={{.ShortCommit}}
+  - id: "darwin"
+    env:
+      - CGO_ENABLED=0
+    main: ./cmd/start_server/main.go
+    goos:
       - darwin
     goarch:
       - amd64
@@ -21,12 +34,31 @@ builds:
       - -X github.com/shogo82148/server-starter.commit={{.ShortCommit}}
 archives:
   - builds:
-      - "cli"
+      - linux
+      - darwin
     name_template: "start_server_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 checksum:
   name_template: "checksums.txt"
 snapshot:
   name_template: "{{ .Tag }}-next"
+
+nfpms:
+  - id: package
+    builds:
+      - linux
+    package_name: go-server-starter
+    homepage: https://github.com/shogo82148/server-starter/
+    maintainer: Ichinose Shogo <shogo82148@gmail.com>
+    description: Yet Another Go port of start_server by shogo82148
+    license: MIT
+    formats:
+      - apk
+      - deb
+      - rpm
+    release: 1
+    epoch: 1
+    bindir: /usr/bin
+
 changelog:
   sort: asc
   filters:
