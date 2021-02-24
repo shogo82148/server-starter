@@ -118,7 +118,7 @@ type Starter struct {
 // Run starts the specified command.
 func (s *Starter) Run() error {
 	if s.Version {
-		fmt.Printf("Yet Another Go port of start_server by shogo82148 version %s %s_%s (built by %s)\n", Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+		fmt.Printf("Yet Another Go port of start_server by shogo82148 version %s (rev %s) %s/%s (built by %s)\n", version, commit, runtime.GOOS, runtime.GOARCH, runtime.Version())
 		return nil
 	}
 	if s.Help {
