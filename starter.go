@@ -192,7 +192,7 @@ func (s *Starter) openPidFile() error {
 	if err != nil {
 		return err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flock(f.Fd(), syscall.LOCK_EX); err != nil {
 		return err
 	}
 	fmt.Fprintf(f, "%d\n", os.Getpid())
@@ -1096,8 +1096,23 @@ func (s *Starter) stop() error {
 		return err
 	}
 
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flock(f.Fd(), syscall.LOCK_EX); err != nil {
 		return err
 	}
 	return nil
+}
+
+// flock is same as syscall.Flock, but it ignores EINTR error.
+// because of the changes from Go 1.14
+//
+// https://golang.org/doc/go1.14#runtime
+// This means that programs that use packages like syscall or golang.org/x/sys/unix will see more slow system calls fail with EINTR errors.
+// Those programs will have to handle those errors in some way, most likely looping to try the system call again.
+func flock(fd uintptr, how int) error {
+	for {
+		err := syscall.Flock(int(fd), how)
+		if err != syscall.EINTR {
+			return err
+		}
+	}
 }
