@@ -56,7 +56,7 @@ nfpms:
       - deb
       - rpm
     release: 1
-    epoch: 1
+    epoch: 0
     bindir: /usr/bin
   - id: package-arm64
     builds:
@@ -71,7 +71,7 @@ nfpms:
       - deb
       - rpm
     release: 1
-    epoch: 1
+    epoch: 0
     bindir: /usr/bin
 
 blobs:
