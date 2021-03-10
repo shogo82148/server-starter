@@ -115,4 +115,14 @@ func TestParseArgs(t *testing.T) {
 			t.Errorf("want 1234,2345, got %#v", s.Ports)
 		}
 	})
+
+	t.Run("AutoRestartInterval", func(t *testing.T) {
+		s, err := ParseArgs([]string{"start_server", "--auto-restart-interval", "1234"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.AutoRestartInterval != 1234*time.Second {
+			t.Errorf("want 1234s, got %s", s.AutoRestartInterval)
+		}
+	})
 }
