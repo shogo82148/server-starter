@@ -137,7 +137,9 @@ func ParseArgs(args []string) (*Starter, error) {
 	}
 	if autoRestartInterval != "" {
 		s.AutoRestartInterval, err = parseDuration(autoRestartInterval)
-		errs = append(errs, fmt.Errorf("invalid --auto-restart-interval format: %s", autoRestartInterval))
+		if err != nil {
+			errs = append(errs, fmt.Errorf("invalid --auto-restart-interval format: %s", autoRestartInterval))
+		}
 	}
 	if len(errs) > 0 {
 		return nil, errs
