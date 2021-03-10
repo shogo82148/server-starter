@@ -666,9 +666,7 @@ func (s *Starter) getSockets() []socket {
 
 // Reload XX
 func (s *Starter) Reload() error {
-	if !s.tryToLockReload() {
-		return nil
-	}
+	s.lockReload()
 	defer s.unlockReload()
 
 RETRY:
