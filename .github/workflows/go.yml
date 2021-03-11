@@ -11,12 +11,7 @@ jobs:
           - ubuntu-latest
           - macOS-latest
         go:
-          - "1"
           - "1.16"
-          - "1.15"
-          - "1.14"
-          - "1.13"
-          - "1.12"
 
     steps:
       - name: Set up Go ${{ matrix.go }}
@@ -28,9 +23,26 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Test
-        run: make test
+        run: |
+          go test -v -race -coverprofile=profile.cov ./...
         env:
           GO111MODULE: "on"
+
+      - name: Send coverage
+        uses: shogo82148/actions-goveralls@v1
+        with:
+          path-to-profile: profile.cov
+          flag-name: Go-${{ matrix.go }}-${{ matrix.os }}
+          parallel: true
+
+  # notifies that all test jobs are finished.
+  finish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: shogo82148/actions-goveralls@v1
+        with:
+          parallel-finished: true
 
   goreleaser-check:
     runs-on: ubuntu-latest
