@@ -4,7 +4,6 @@ package main
 
 import (
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"time"
@@ -17,7 +16,7 @@ func main() {
 }
 
 func logging() {
-	if _, err := io.Copy(ioutil.Discard, os.Stdin); err != nil {
+	if _, err := io.Copy(os.Discard, os.Stdin); err != nil {
 		log.Fatal(err)
 	}
 }
