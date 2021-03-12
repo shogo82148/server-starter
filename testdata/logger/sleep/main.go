@@ -16,7 +16,7 @@ func main() {
 }
 
 func logging() {
-	if _, err := io.Copy(os.Discard, os.Stdin); err != nil {
+	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
 		log.Fatal(err)
 	}
 }
