@@ -2,6 +2,7 @@ package listener
 
 import (
 	"context"
+	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
@@ -185,7 +186,7 @@ func TestListenConfigs(t *testing.T) {
 	})
 
 	t.Run("unix", func(t *testing.T) {
-		dir, err := os.MkdirTemp("", "server-starter-test")
+		dir, err := ioutil.TempDir("", "server-starter-test")
 		if err != nil {
 			t.Fatalf("Failed to create temp directory: %s", err)
 		}
