@@ -287,7 +287,12 @@ func (s *Starter) autoRestarter() {
 			} else {
 				s.logf("autorestart triggered (forced, interval=%s)", interval)
 			}
-			go s.Reload()
+			if s.tryToLockReload() {
+				go func() {
+					defer s.unlockReload()
+					s.reload()
+				}()
+			}
 		case <-s.ctx.Done():
 			return
 		}
@@ -470,19 +475,18 @@ func (w *worker) watch() {
 			switch state {
 			case workerStateInit:
 				s.logf("worker %d died unexpectedly with status %d, restarting", w.Pid(), st.ExitCode())
-				w.starter.wgWorker.Add(1)
-				go func() {
-					defer s.wgWorker.Done()
-					if !s.tryToLockReload() {
-						return // restarting proccess is already started, skip
-					}
-					defer s.unlockReload()
-					w, err := s.startWorker()
-					if err != nil {
-						return
-					}
-					w.Watch()
-				}()
+				if s.tryToLockReload() {
+					w.starter.wgWorker.Add(1)
+					go func() {
+						defer s.wgWorker.Done()
+						defer s.unlockReload()
+						w, err := s.startWorker()
+						if err != nil {
+							return
+						}
+						w.Watch()
+					}()
+				}
 			case workerStateOld:
 				s.logf("old worker %d died, status %d", w.Pid(), st.ExitCode())
 			case workerStateShutdown:
@@ -664,11 +668,14 @@ func (s *Starter) getSockets() []socket {
 	return s.sockets
 }
 
-// Reload XX
+// Reload starts a new worker and stop the current worker.
 func (s *Starter) Reload() error {
 	s.lockReload()
 	defer s.unlockReload()
+	return s.reload()
+}
 
+func (s *Starter) reload() error {
 RETRY:
 	w, err := s.startWorker()
 	if err != nil {
