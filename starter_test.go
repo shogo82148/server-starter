@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -20,7 +19,7 @@ import (
 )
 
 func Test_Start(t *testing.T) {
-	dir, err := ioutil.TempDir("", "server-starter-test")
+	dir, err := os.MkdirTemp("", "server-starter-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %s", err)
 	}
@@ -72,7 +71,7 @@ func Test_Start(t *testing.T) {
 		conn.Close()
 
 		time.Sleep(3 * time.Second)
-		status, err := ioutil.ReadFile(statusFile)
+		status, err := os.ReadFile(statusFile)
 		if err != nil {
 			t.Errorf("fail to read status file %s: %s", statusFile, err)
 		}
@@ -86,7 +85,7 @@ func Test_Start(t *testing.T) {
 		// 3sec: the old worker stops.
 		go sd.Reload()
 		time.Sleep(2 * time.Second)
-		status, err = ioutil.ReadFile(statusFile)
+		status, err = os.ReadFile(statusFile)
 		if err != nil {
 			t.Errorf("fail to read status file %s: %s", statusFile, err)
 		}
@@ -95,7 +94,7 @@ func Test_Start(t *testing.T) {
 		}
 
 		time.Sleep(2 * time.Second)
-		status, err = ioutil.ReadFile(statusFile)
+		status, err = os.ReadFile(statusFile)
 		if err != nil {
 			t.Errorf("fail to read status file %s: %s", statusFile, err)
 		}
@@ -103,7 +102,7 @@ func Test_Start(t *testing.T) {
 			t.Errorf(`want /^2:\d+\n$/, got %s`, status)
 		}
 
-		signameGot, err := ioutil.ReadFile(filepath.Join(dir, "signame"))
+		signameGot, err := os.ReadFile(filepath.Join(dir, "signame"))
 		if string(signameGot) != signame {
 			t.Errorf("want %s, got %s", signame, string(signameGot))
 		}
@@ -137,7 +136,7 @@ func Test_Start(t *testing.T) {
 }
 
 func Test_StartFail(t *testing.T) {
-	dir, err := ioutil.TempDir("", "server-starter-test")
+	dir, err := os.MkdirTemp("", "server-starter-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %s", err)
 	}
@@ -204,7 +203,7 @@ func Test_StartFail(t *testing.T) {
 }
 
 func Test_KillOldDeplay(t *testing.T) {
-	dir, err := ioutil.TempDir("", "server-starter-test")
+	dir, err := os.MkdirTemp("", "server-starter-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %s", err)
 	}
@@ -263,7 +262,7 @@ func Test_KillOldDeplay(t *testing.T) {
 	go sd.Reload()
 
 	time.Sleep(4 * time.Second)
-	status, err := ioutil.ReadFile(statusFile)
+	status, err := os.ReadFile(statusFile)
 	if err != nil {
 		t.Errorf("fail to read status file %s: %s", statusFile, err)
 	}
@@ -272,7 +271,7 @@ func Test_KillOldDeplay(t *testing.T) {
 	}
 
 	time.Sleep(2 * time.Second)
-	status, err = ioutil.ReadFile(statusFile)
+	status, err = os.ReadFile(statusFile)
 	if err != nil {
 		t.Errorf("fail to read status file %s: %s", statusFile, err)
 	}
@@ -302,7 +301,7 @@ func Test_KillOldDeplay(t *testing.T) {
 }
 
 func Test_Unix(t *testing.T) {
-	dir, err := ioutil.TempDir("", "server-starter-test")
+	dir, err := os.MkdirTemp("", "server-starter-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %s", err)
 	}
@@ -359,7 +358,7 @@ func Test_Unix(t *testing.T) {
 }
 
 func Test_Dir(t *testing.T) {
-	dir, err := ioutil.TempDir("", "server-starter-test")
+	dir, err := os.MkdirTemp("", "server-starter-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %s", err)
 	}
@@ -417,7 +416,7 @@ func Test_Dir(t *testing.T) {
 }
 
 func Test_AutoRestart(t *testing.T) {
-	dir, err := ioutil.TempDir("", "server-starter-test")
+	dir, err := os.MkdirTemp("", "server-starter-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %s", err)
 	}
@@ -474,7 +473,7 @@ func Test_AutoRestart(t *testing.T) {
 
 	// check status before auto-restart
 	time.Sleep(6 * time.Second)
-	status, err := ioutil.ReadFile(statusFile)
+	status, err := os.ReadFile(statusFile)
 	if err != nil {
 		t.Errorf("fail to read status file %s: %s", statusFile, err)
 	}
@@ -484,7 +483,7 @@ func Test_AutoRestart(t *testing.T) {
 
 	// status during transient state
 	time.Sleep(3 * time.Second)
-	status, err = ioutil.ReadFile(statusFile)
+	status, err = os.ReadFile(statusFile)
 	if err != nil {
 		t.Errorf("fail to read status file %s: %s", statusFile, err)
 	}
@@ -494,7 +493,7 @@ func Test_AutoRestart(t *testing.T) {
 
 	// status after auto-restart
 	time.Sleep(3 * time.Second)
-	status, err = ioutil.ReadFile(statusFile)
+	status, err = os.ReadFile(statusFile)
 	if err != nil {
 		t.Errorf("fail to read status file %s: %s", statusFile, err)
 	}
@@ -524,7 +523,7 @@ func Test_AutoRestart(t *testing.T) {
 }
 
 func Test_EnvDir(t *testing.T) {
-	dir, err := ioutil.TempDir("", "server-starter-test")
+	dir, err := os.MkdirTemp("", "server-starter-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %s", err)
 	}
@@ -537,7 +536,7 @@ func Test_EnvDir(t *testing.T) {
 	}
 	os.Unsetenv("FOO")
 	envfile := filepath.Join(envdir, "FOO")
-	if err := ioutil.WriteFile(envfile, []byte(" old env \nsecond line will be ignored.\n"), 0644); err != nil {
+	if err := os.WriteFile(envfile, []byte(" old env \nsecond line will be ignored.\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -582,7 +581,7 @@ func Test_EnvDir(t *testing.T) {
 	}
 
 	// rewrite envdir...
-	if err := ioutil.WriteFile(envfile, []byte("new env\n"), 0644); err != nil {
+	if err := os.WriteFile(envfile, []byte("new env\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -613,7 +612,7 @@ func Test_EnvDir(t *testing.T) {
 }
 
 func Test_Logger(t *testing.T) {
-	dir, err := ioutil.TempDir("", "server-starter-test")
+	dir, err := os.MkdirTemp("", "server-starter-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %s", err)
 	}
@@ -687,7 +686,7 @@ func Test_Logger(t *testing.T) {
 		t.Errorf("want %q, got %q", want, buf.String())
 	}
 
-	if log, err := ioutil.ReadFile(logFile); err == nil {
+	if log, err := os.ReadFile(logFile); err == nil {
 		t.Logf("logfile: %s", string(log))
 	} else {
 		t.Error(err)
@@ -695,7 +694,7 @@ func Test_Logger(t *testing.T) {
 }
 
 func Test_LoggerDies(t *testing.T) {
-	dir, err := ioutil.TempDir("", "server-starter-test")
+	dir, err := os.MkdirTemp("", "server-starter-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %s", err)
 	}

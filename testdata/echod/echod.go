@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -66,7 +65,7 @@ func watchSignal() {
 	for sig := range c {
 		sig := sig
 		go func() {
-			ioutil.WriteFile(os.Args[1], []byte(sig.String()), 0666)
+			os.WriteFile(os.Args[1], []byte(sig.String()), 0666)
 			time.Sleep(2 * time.Second)
 			os.Exit(0)
 		}()

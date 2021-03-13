@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -860,7 +860,7 @@ func (s *Starter) updateStatusLocked() {
 		fmt.Fprintf(&buf, "%d:%d\n", w.generation, w.Pid())
 	}
 	tmp := fmt.Sprintf("%s.%d", s.StatusFile, os.Getegid())
-	if err := ioutil.WriteFile(tmp, buf.Bytes(), 0666); err != nil {
+	if err := os.WriteFile(tmp, buf.Bytes(), 0666); err != nil {
 		s.logf("failed to create temporary file:%s:%s", tmp, err)
 		return
 	}
@@ -1004,7 +1004,7 @@ func (s *Starter) restart() error {
 	}
 
 	// get pid
-	buf, err := ioutil.ReadFile(s.PidFile)
+	buf, err := os.ReadFile(s.PidFile)
 	if err != nil {
 		return err
 	}
@@ -1014,7 +1014,7 @@ func (s *Starter) restart() error {
 	}
 
 	getGenerations := func() ([]int, error) {
-		buf, err := ioutil.ReadFile(s.StatusFile)
+		buf, err := os.ReadFile(s.StatusFile)
 		if err != nil {
 			return nil, err
 		}
@@ -1075,7 +1075,7 @@ func (s *Starter) stop() error {
 	}
 	defer f.Close()
 
-	buf, err := ioutil.ReadAll(f)
+	buf, err := io.ReadAll(f)
 	if err != nil {
 		return err
 	}
