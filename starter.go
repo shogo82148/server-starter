@@ -468,7 +468,7 @@ func (w *worker) watch() {
 			state = sig.state
 			err := w.cmd.Process.Signal(sig.signal)
 			if err != nil {
-				s.logf("failed to send signal %s to %d", signalToName(sig.signal), w.Pid())
+				s.logf("failed to send signal %s to %d: %s", signalToName(sig.signal), w.Pid(), err)
 			}
 		case <-w.done:
 			st := w.cmd.ProcessState

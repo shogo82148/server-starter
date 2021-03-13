@@ -723,3 +723,66 @@ func Test_LoggerDies(t *testing.T) {
 		t.Errorf("sd.Run() failed: %s", err)
 	}
 }
+
+func Test_RestartAndStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dir, err := os.MkdirTemp("", "server-starter-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %s", err)
+	}
+	defer os.RemoveAll(dir)
+
+	// build echod
+	echod := filepath.Join(dir, "echod")
+	cmd := exec.Command("go", "build", "-o", echod, "testdata/echod/echod.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
+	}
+
+	// build start_server
+	startServer := filepath.Join(dir, "start_server")
+	cmd = exec.Command("go", "build", "-o", startServer, "cmd/start_server/main.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
+	}
+
+	pidFile := filepath.Join(dir, "echod.pid")
+	statusFile := filepath.Join(dir, "echod.status")
+	signame := filepath.Join(dir, "signame")
+
+	cmd = exec.CommandContext(
+		ctx,
+		startServer, "--port=0", "--interval=5", "--pid-file="+pidFile, "--status-file="+statusFile,
+		"--", echod, signame,
+	)
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stderr
+	cmd.Start()
+
+	var sd *Starter
+
+	// wait for starting echod
+	time.Sleep(time.Second)
+
+	sd = &Starter{
+		PidFile:    pidFile,
+		StatusFile: statusFile,
+		Restart:    true,
+	}
+	if err := sd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	sd = &Starter{
+		PidFile:    pidFile,
+		StatusFile: statusFile,
+		Stop:       true,
+	}
+	if err := sd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd.Wait()
+}
