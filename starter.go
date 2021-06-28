@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -118,7 +117,7 @@ type Starter struct {
 // Run starts the specified command.
 func (s *Starter) Run() error {
 	if s.Version {
-		fmt.Printf("Yet Another Go port of start_server by shogo82148 version %s (rev %s) %s/%s (built by %s)\n", version, commit, runtime.GOOS, runtime.GOARCH, runtime.Version())
+		showVersion()
 		return nil
 	}
 	if s.Help {
@@ -826,7 +825,7 @@ func (s *Starter) listWorkers() []*worker {
 		workers = append(workers, w)
 	}
 	sort.Slice(workers, func(i, j int) bool {
-		return workers[i].Pid() < workers[i].Pid()
+		return workers[i].Pid() < workers[j].Pid()
 	})
 	return workers
 }

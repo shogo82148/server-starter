@@ -103,6 +103,9 @@ func Test_Start(t *testing.T) {
 		}
 
 		signameGot, err := os.ReadFile(filepath.Join(dir, "signame"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if string(signameGot) != signame {
 			t.Errorf("want %s, got %s", signame, string(signameGot))
 		}
