@@ -10,7 +10,7 @@ import (
 var version = "" // .Version
 
 func showVersion() {
-	fmt.Printf("Yet Another Go port of start_server by shogo82148 version %s %s/%s (built by %s)\n", getVersion(), runtime.GOOS, runtime.GOARCH, runtime.Version())
+	fmt.Printf("Yet Another Go port of start_server by shogo82148 %s %s/%s (built by %s)\n", getVersion(), runtime.GOOS, runtime.GOARCH, runtime.Version())
 }
 
 func getVersion() string {
