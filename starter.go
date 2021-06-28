@@ -825,7 +825,7 @@ func (s *Starter) listWorkers() []*worker {
 		workers = append(workers, w)
 	}
 	sort.Slice(workers, func(i, j int) bool {
-		return workers[i].Pid() < workers[j].Pid()
+		return workers[i].Pid() < workers[i].Pid()
 	})
 	return workers
 }
