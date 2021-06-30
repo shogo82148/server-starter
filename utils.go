@@ -1,6 +1,9 @@
 package starter
 
-import "sync/atomic"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // This code is from https://github.com/go-sql-driver/mysql/blob/5ee934fb0eb6903ba5396bf34817ff178b29de39/utils.go#L612-L653
 
@@ -15,8 +18,16 @@ import "sync/atomic"
 // for details.
 type noCopy struct{}
 
+var _ sync.Locker = &noCopy{}
+
 // Lock is a no-op used by -copylocks checker from `go vet`.
 func (*noCopy) Lock() {}
+
+// Unlock is a no-op used by -copylocks checker from `go vet`.
+// noCopy should implement sync.Locker from Go 1.11
+// https://github.com/golang/go/commit/c2eba53e7f80df21d51285879d51ab81bcfbf6bc
+// https://github.com/golang/go/issues/26165
+func (*noCopy) Unlock() {}
 
 // atomicBool is a wrapper around uint32 for usage as a boolean value with
 // atomic access.
@@ -27,6 +38,7 @@ type atomicBool struct {
 
 // IsSet returns whether the current boolean value is true
 func (ab *atomicBool) IsSet() bool {
+	_ = &ab._noCopy // suppress a warning: field _noCopy is unused (U1000)go-staticcheck
 	return atomic.LoadUint32(&ab.value) > 0
 }
 
