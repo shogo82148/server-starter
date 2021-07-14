@@ -27,5 +27,5 @@ Many PSGI servers support this. If you want your Go program to support it, you c
 ## INSTALLATION
 
 ```
-go get github.com/shogo82148/server-starter/cmd/start_server
+go install github.com/shogo82148/server-starter/cmd/start_server@latest
 ```
