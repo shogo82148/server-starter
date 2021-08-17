@@ -1,3 +1,3 @@
 module github.com/shogo82148/server-starter/listener
 
-go 1.16
+go 1.17
