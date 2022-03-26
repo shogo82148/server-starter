@@ -116,8 +116,4 @@ blobs:
     folder: rockylinux/8/aarch64/go-server-starter
 
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
+  use: github-native
