@@ -20,7 +20,7 @@ type logger interface {
 	Stderr() *os.File
 
 	// Logf outputs a log into Stderr()
-	Logf(format string, args ...interface{})
+	Logf(format string, args ...any)
 
 	// Done returns a channel that's closed when work the logger stopped.
 	Done() <-chan struct{}
@@ -52,7 +52,7 @@ func (stdLogger) Done() <-chan struct{} {
 	return nil
 }
 
-func (stdLogger) Logf(format string, args ...interface{}) {
+func (stdLogger) Logf(format string, args ...any) {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, format, args...)
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
@@ -93,7 +93,7 @@ func (*fileLogger) Done() <-chan struct{} {
 	return nil
 }
 
-func (l *fileLogger) Logf(format string, args ...interface{}) {
+func (l *fileLogger) Logf(format string, args ...any) {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, format, args...)
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
@@ -174,7 +174,7 @@ func (l *cmdLogger) Done() <-chan struct{} {
 	return l.done
 }
 
-func (l *cmdLogger) Logf(format string, args ...interface{}) {
+func (l *cmdLogger) Logf(format string, args ...any) {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, format, args...)
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
