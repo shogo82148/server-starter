@@ -69,12 +69,8 @@ func ParseArgs(args []string) (*Starter, error) {
 		}
 
 		// parse options with values.
-		var opt, value string
-		if idx := strings.IndexByte(args[i], '='); idx >= 0 {
-			opt = args[i][:idx]
-			value = args[i][idx+1:]
-		} else {
-			opt = args[i]
+		opt, value, found := strings.Cut(args[i], "=")
+		if !found {
 			i++
 			if i >= len(args) {
 				errs = append(errs, fmt.Errorf("missing the value for option %s", opt))
