@@ -1000,7 +1000,7 @@ func (s *Starter) close() {
 	}
 }
 
-func (s *Starter) logf(format string, args ...interface{}) {
+func (s *Starter) logf(format string, args ...any) {
 	s.logger.Logf(format, args...)
 }
 
