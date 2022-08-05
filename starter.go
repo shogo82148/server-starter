@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -106,7 +107,7 @@ type Starter struct {
 	wg sync.WaitGroup
 
 	mu          sync.RWMutex
-	shutdown    atomicBool
+	shutdown    atomic.Bool
 	chreload    chan struct{}
 	chstarter   chan struct{}
 	chrestarter chan struct{}
@@ -224,7 +225,7 @@ func (s *Starter) openLogFile() error {
 func (s *Starter) watchLogger() {
 	<-s.logger.Done()
 
-	if s.shutdown.IsSet() {
+	if s.shutdown.Load() {
 		// It is in the shutting down process.
 		// this is the expected behavior.
 		return
@@ -338,7 +339,7 @@ func (s *Starter) startWorker() (*worker, error) {
 RETRY:
 	w, err := s.tryToStartWorker()
 	if err != nil {
-		if s.shutdown.IsSet() {
+		if s.shutdown.Load() {
 			return nil, errShutdown
 		}
 		s.logf("failed to exec %s:%s", s.Command, err)
@@ -351,7 +352,7 @@ RETRY:
 	timer := time.NewTimer(s.interval())
 	select {
 	case <-w.done:
-		if s.shutdown.IsSet() {
+		if s.shutdown.Load() {
 			return nil, errShutdown
 		}
 		state = w.cmd.ProcessState
@@ -370,7 +371,7 @@ RETRY:
 }
 
 func (s *Starter) tryToStartWorker() (*worker, error) {
-	if s.shutdown.IsSet() {
+	if s.shutdown.Load() {
 		return nil, errShutdown
 	}
 	ch := s.getChStarter()
@@ -709,7 +710,7 @@ RETRY:
 		case <-timer.C:
 		case <-w.done:
 			timer.Stop()
-			if s.shutdown.IsSet() {
+			if s.shutdown.Load() {
 				return nil
 			}
 
@@ -882,7 +883,7 @@ func (s *Starter) Shutdown(ctx context.Context) error {
 	defer s.wg.Done()
 
 	// stop starting new worker
-	if s.shutdown.TrySet(true) {
+	if s.shutdown.CompareAndSwap(false, true) {
 		// wait for a worker that is currently starting
 		ch := s.getChStarter()
 		select {
@@ -926,7 +927,7 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 	defer cancel()
 
 	// stop starting new worker
-	if s.shutdown.TrySet(true) {
+	if s.shutdown.CompareAndSwap(false, true) {
 		// wait for a worker that is currently starting
 		ch := s.getChStarter()
 		select {

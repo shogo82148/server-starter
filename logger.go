@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -117,7 +118,7 @@ type cmdLogger struct {
 	done   chan struct{}
 	cmd    *exec.Cmd
 
-	closed atomicBool
+	closed atomic.Bool
 	pr, pw *os.File
 }
 
@@ -180,7 +181,7 @@ func (l *cmdLogger) Logf(format string, args ...any) {
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
-	if l.closed.IsSet() {
+	if l.closed.Load() {
 		os.Stderr.Write(buf.Bytes())
 	} else {
 		l.pw.Write(buf.Bytes())
@@ -242,7 +243,7 @@ func (l *cmdLogger) wait() {
 }
 
 func (l *cmdLogger) closePipe() {
-	if l.closed.TrySet(true) {
+	if l.closed.CompareAndSwap(false, true) {
 		l.pw.Close()
 		l.pr.Close()
 	}
