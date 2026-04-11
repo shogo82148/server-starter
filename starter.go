@@ -250,17 +250,14 @@ func (s *Starter) waitSignal() {
 		syscall.SIGQUIT,
 	)
 	for sig := range ch {
-		sig := sig
 		switch sig {
 		case syscall.SIGHUP:
 			s.logf("received HUP, spawning a new worker")
 			go s.Reload()
 		default:
-			s.wg.Add(1)
-			go func() {
-				defer s.wg.Done()
+			s.wg.Go(func() {
 				s.shutdownBySignal(sig)
-			}()
+			})
 		}
 	}
 }
@@ -549,9 +546,9 @@ func (s *Starter) listen() error {
 
 		var sock socket
 		var ok bool
-		if strings.HasPrefix(port, "u") {
+		if after, ok0 := strings.CutPrefix(port, "u"); ok0 {
 			// Listen UDP Port
-			port = strings.TrimPrefix(port, "u")
+			port = after
 			hostport = net.JoinHostPort(host, port)
 			conn, err := lc.ListenPacket(s.ctx, "udp"+suffix, hostport)
 			if err != nil {
@@ -1026,12 +1023,12 @@ func (s *Starter) restart() error {
 			return nil, err
 		}
 		gens := []int{}
-		for _, line := range bytes.Split(buf, []byte{'\n'}) {
-			idx := bytes.IndexByte(line, ':')
-			if idx < 0 {
+		for line := range bytes.SplitSeq(buf, []byte{'\n'}) {
+			before, _, ok := bytes.Cut(line, []byte{':'})
+			if !ok {
 				continue
 			}
-			g, err := strconv.Atoi(string(line[:idx]))
+			g, err := strconv.Atoi(string(before))
 			if err != nil {
 				continue
 			}
