@@ -77,16 +77,6 @@ nfpms:
     bindir: /usr/bin
 
 blobs:
-  # Amazon Linux 2
-  - provider: s3
-    bucket: shogo82148-rpm-temporary
-    ids: [package-amd64]
-    directory: amazonlinux/2/x86_64/go-server-starter
-  - provider: s3
-    bucket: shogo82148-rpm-temporary
-    ids: [package-arm64]
-    directory: amazonlinux/2/aarch64/go-server-starter
-
   # Amazon Linux 2023
   - provider: s3
     bucket: shogo82148-rpm-temporary
