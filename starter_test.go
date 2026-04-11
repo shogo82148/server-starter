@@ -633,14 +633,12 @@ func Test_Logger(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.Stderr = pw
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer pr.Close()
 		if _, err := io.Copy(&buf, pr); err != nil {
 			t.Error(err)
 		}
-	}()
+	})
 
 	// build the server
 	serverBinFile := filepath.Join(dir, "server")
@@ -728,8 +726,7 @@ func Test_LoggerDies(t *testing.T) {
 }
 
 func Test_RestartAndStop(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	dir, err := os.MkdirTemp("", "server-starter-test")
 	if err != nil {
