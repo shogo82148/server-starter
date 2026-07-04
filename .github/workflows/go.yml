@@ -68,8 +68,8 @@ jobs:
       - name: Test
         run: |
           extra=()
-          if [[ "${{ matrix.os }}" == "macOS-latest" && "${{ matrix.go }}" == "1.21" ]]; then
-            # Go 1.21 can produce a Mach-O test binary without LC_UUID on macOS-latest.
+          if [[ "${{ matrix.os }}" == "macOS-latest" ]]; then
+            # Some Go versions can produce a Mach-O test binary without LC_UUID on macOS-latest.
             # Force the system linker so dyld accepts the generated test binary.
             extra+=(-ldflags=-linkmode=external)
           fi
