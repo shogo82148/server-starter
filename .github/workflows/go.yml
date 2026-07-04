@@ -67,7 +67,13 @@ jobs:
 
       - name: Test
         run: |
-          go test -v -race -coverprofile=profile.cov ./...
+          extra=()
+          if [[ "${{ matrix.os }}" == "macOS-latest" ]]; then
+            # Some Go versions can produce a Mach-O test binary without LC_UUID on macOS-latest.
+            # Force the system linker so dyld accepts the generated test binary.
+            extra+=(-ldflags=-linkmode=external)
+          fi
+          go test -v -race -coverprofile=profile.cov "${extra[@]}" ./...
         working-directory: listener
         env:
           GO111MODULE: "on"
