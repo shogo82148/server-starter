@@ -156,6 +156,7 @@ type cmdLogger struct {
 	cmd    *exec.Cmd
 
 	closed atomic.Bool
+	mu     sync.Mutex
 	pr, pw *os.File
 }
 
@@ -213,11 +214,16 @@ func (l *cmdLogger) Done() <-chan struct{} {
 }
 
 func (l *cmdLogger) Logf(format string, args ...any) {
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, format, args...)
+	buf := getBuffer()
+	defer putBuffer(buf)
+
+	fmt.Fprintf(buf, format, args...)
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.closed.Load() {
 		os.Stderr.Write(buf.Bytes())
 	} else {
