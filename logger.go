@@ -7,10 +7,27 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+var pool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
+
+func getBuffer() *bytes.Buffer {
+	buf := pool.Get().(*bytes.Buffer)
+	buf.Reset()
+	return buf
+}
+
+func putBuffer(buf *bytes.Buffer) {
+	pool.Put(buf)
+}
 
 // logger is an interface of server-starter's logger.
 type logger interface {
@@ -34,41 +51,47 @@ type logger interface {
 	Close() error
 }
 
-var _ logger = stdLogger{}
+var _ logger = &stdLogger{}
 
 // stdLogger is a logger that outputs into os.Stdout and os.Stderr
-type stdLogger struct{}
-
-func newStdLogger() logger {
-	return stdLogger{}
+type stdLogger struct {
+	mu sync.Mutex
 }
 
-func (stdLogger) Stdout() *os.File {
+func newStdLogger() logger {
+	return &stdLogger{}
+}
+
+func (*stdLogger) Stdout() *os.File {
 	return os.Stdout
 }
 
-func (stdLogger) Stderr() *os.File {
+func (*stdLogger) Stderr() *os.File {
 	return os.Stderr
 }
 
-func (stdLogger) Done() <-chan struct{} {
+func (*stdLogger) Done() <-chan struct{} {
 	return nil
 }
 
-func (stdLogger) Logf(format string, args ...any) {
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, format, args...)
+func (l *stdLogger) Logf(format string, args ...any) {
+	buf := getBuffer()
+	defer putBuffer(buf)
+	fmt.Fprintf(buf, format, args...)
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	os.Stderr.Write(buf.Bytes())
 }
 
-func (stdLogger) Shutdown(ctx context.Context) error {
+func (*stdLogger) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (stdLogger) Close() error {
+func (*stdLogger) Close() error {
 	return nil
 }
 
