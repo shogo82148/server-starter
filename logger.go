@@ -34,6 +34,8 @@ type logger interface {
 	Close() error
 }
 
+var _ logger = stdLogger{}
+
 // stdLogger is a logger that outputs into os.Stdout and os.Stderr
 type stdLogger struct{}
 
@@ -70,6 +72,9 @@ func (stdLogger) Close() error {
 	return nil
 }
 
+var _ logger = &fileLogger{}
+
+// fileLogger is a logger that outputs into a file.
 type fileLogger struct {
 	f *os.File
 }
@@ -110,6 +115,8 @@ func (l *fileLogger) Shutdown(ctx context.Context) error {
 func (l *fileLogger) Close() error {
 	return l.f.Close()
 }
+
+var _ logger = &cmdLogger{}
 
 // cmdLogger is a logger that outputs into stdin of a command.
 type cmdLogger struct {
