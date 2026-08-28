@@ -141,6 +141,8 @@ func (l *fileLogger) Shutdown(ctx context.Context) error {
 }
 
 func (l *fileLogger) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return l.f.Close()
 }
 
