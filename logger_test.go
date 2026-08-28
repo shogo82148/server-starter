@@ -114,7 +114,8 @@ func captureFileLoggerOutput(t *testing.T, f func(l *fileLogger)) []byte {
 	defer os.Remove(tmpfile.Name()) //nolint:errcheck // Ignore error on cleanup
 
 	// Call the function that writes to the file logger
-	f(&fileLogger{f: tmpfile})
+	logger := &fileLogger{f: tmpfile}
+	f(logger)
 
 	// Read the contents of the temporary file
 	if _, err := tmpfile.Seek(0, io.SeekStart); err != nil {
@@ -124,6 +125,10 @@ func captureFileLoggerOutput(t *testing.T, f func(l *fileLogger)) []byte {
 	_, err = buf.ReadFrom(tmpfile)
 	if err != nil {
 		t.Fatalf("failed to read from temp file: %v", err)
+	}
+
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close() returned error: %v", err)
 	}
 
 	return buf.Bytes()
