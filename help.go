@@ -31,7 +31,7 @@ func showHelp() {
 		"    minimum interval to respawn the server program (default: 1)\n",
 		"    Go's duration format is available, such as such as \"300ms\", \"1.5h\" or \"2h45m\".\n",
 		"    Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\".\n",
-		"    See also https://golang.org/pkg/time/#Duration\n",
+		"    See also https://pkg.go.dev/time#Duration\n",
 		"\n",
 		"  --signal-on-hup=SIGNAL\n",
 		"    name of the signal to be sent to the server process when start_server receives a SIGHUP (default: SIGTERM).\n",
