@@ -27,16 +27,19 @@ func captureStderr(t *testing.T, f func()) []byte {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer r.Close()
-		_, err := buf.ReadFrom(r)
-		if err != nil {
+		if _, err := buf.ReadFrom(r); err != nil {
 			t.Errorf("failed to read from pipe: %v", err)
+		}
+		if err := r.Close(); err != nil {
+			t.Errorf("failed to close pipe reader: %v", err)
 		}
 	}()
 
 	// Call the function that writes to os.Stderr
 	f()
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe writer: %v", err)
+	}
 
 	<-done
 	return buf.Bytes()
@@ -87,7 +90,7 @@ func BenchmarkStdLogger(b *testing.B) {
 		b.Fatalf("failed to open os.DevNull: %v", err)
 	}
 	b.Cleanup(func() {
-		os.Stderr.Close()
+		os.Stderr.Close() //nolint:errcheck // Ignore error on cleanup
 		os.Stderr = original
 	})
 
@@ -108,13 +111,15 @@ func captureFileLoggerOutput(t *testing.T, f func(l *fileLogger)) []byte {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck // Ignore error on cleanup
 
 	// Call the function that writes to the file logger
 	f(&fileLogger{f: tmpfile})
 
 	// Read the contents of the temporary file
-	tmpfile.Seek(0, io.SeekStart)
+	if _, err := tmpfile.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("failed to seek to start of temp file: %v", err)
+	}
 	buf := new(bytes.Buffer)
 	_, err = buf.ReadFrom(tmpfile)
 	if err != nil {
@@ -170,7 +175,7 @@ func BenchmarkFileLogger(b *testing.B) {
 		b.Fatalf("failed to create file logger: %v", err)
 	}
 	b.Cleanup(func() {
-		logger.Close()
+		logger.Close() //nolint:errcheck // Ignore error on cleanup
 	})
 
 	s := strings.Repeat("Hello World!", 1000)
