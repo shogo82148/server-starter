@@ -2,6 +2,7 @@ package starter
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -94,6 +95,87 @@ func BenchmarkStdLogger(b *testing.B) {
 
 	b.ResetTimer()
 	logger := stdLogger{}
+	for b.Loop() {
+		logger.Logf("%s", s)
+	}
+}
+
+func captureFileLoggerOutput(t *testing.T, f func(l *fileLogger)) []byte {
+	t.Helper()
+
+	// Create a temporary file to capture the output
+	tmpfile, err := os.CreateTemp("", "filelogger_test")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpfile.Name())
+
+	// Call the function that writes to the file logger
+	f(&fileLogger{f: tmpfile})
+
+	// Read the contents of the temporary file
+	tmpfile.Seek(0, io.SeekStart)
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(tmpfile)
+	if err != nil {
+		t.Fatalf("failed to read from temp file: %v", err)
+	}
+
+	return buf.Bytes()
+}
+
+func TestFileLogger(t *testing.T) {
+	logger, err := newFileLogger(os.DevNull)
+	if err != nil {
+		t.Fatalf("failed to create file logger: %v", err)
+	}
+
+	if logger.Stdout().Name() != os.DevNull {
+		t.Errorf("Stdout() = %v, want %v", logger.Stdout().Name(), os.DevNull)
+	}
+	if logger.Stderr().Name() != os.DevNull {
+		t.Errorf("Stderr() = %v, want %v", logger.Stderr().Name(), os.DevNull)
+	}
+	if logger.Done() != nil {
+		t.Errorf("Done() = %v, want nil", logger.Done())
+	}
+
+	got := captureFileLoggerOutput(t, func(l *fileLogger) {
+		l.Logf("Hello, %s!", "world")
+	})
+	want := "Hello, world!\n"
+	if string(got) != want {
+		t.Errorf("Logf() wrote %q, want %q", got, want)
+	}
+
+	got = captureFileLoggerOutput(t, func(l *fileLogger) {
+		l.Logf("Hello, %s!\n", "world")
+	})
+	want = "Hello, world!\n"
+	if string(got) != want {
+		t.Errorf("Logf() wrote %q, want %q", got, want)
+	}
+
+	if err := logger.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown() returned error: %v", err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close() returned error: %v", err)
+	}
+}
+
+func BenchmarkFileLogger(b *testing.B) {
+	logger, err := newFileLogger(os.DevNull)
+	if err != nil {
+		b.Fatalf("failed to create file logger: %v", err)
+	}
+	b.Cleanup(func() {
+		logger.Close()
+	})
+
+	s := strings.Repeat("Hello World!", 1000)
+
+	b.ResetTimer()
 	for b.Loop() {
 		logger.Logf("%s", s)
 	}
