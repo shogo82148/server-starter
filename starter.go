@@ -2,6 +2,7 @@ package starter
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -11,7 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -822,8 +823,8 @@ func (s *Starter) listWorkers() []*worker {
 	for w := range s.workers {
 		workers = append(workers, w)
 	}
-	sort.Slice(workers, func(i, j int) bool {
-		return workers[i].Pid() < workers[j].Pid()
+	slices.SortFunc(workers, func(a, b *worker) int {
+		return cmp.Compare(a.Pid(), b.Pid())
 	})
 	return workers
 }
@@ -855,8 +856,8 @@ func (s *Starter) updateStatusLocked() {
 		workers = append(workers, w)
 	}
 
-	sort.Slice(workers, func(i, j int) bool {
-		return workers[i].generation < workers[j].generation
+	slices.SortFunc(workers, func(a, b *worker) int {
+		return cmp.Compare(a.generation, b.generation)
 	})
 
 	var buf bytes.Buffer
@@ -1034,7 +1035,7 @@ func (s *Starter) restart() error {
 			}
 			gens = append(gens, g)
 		}
-		sort.Ints(gens)
+		slices.Sort(gens)
 		return gens, nil
 	}
 	var waitFor int
