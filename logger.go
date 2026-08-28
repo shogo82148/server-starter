@@ -99,7 +99,8 @@ var _ logger = &fileLogger{}
 
 // fileLogger is a logger that outputs into a file.
 type fileLogger struct {
-	f *os.File
+	mu sync.Mutex
+	f  *os.File
 }
 
 func newFileLogger(filename string) (logger, error) {
@@ -123,11 +124,15 @@ func (*fileLogger) Done() <-chan struct{} {
 }
 
 func (l *fileLogger) Logf(format string, args ...any) {
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, format, args...)
+	buf := getBuffer()
+	defer putBuffer(buf)
+	fmt.Fprintf(buf, format, args...)
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.f.Write(buf.Bytes())
 }
 
