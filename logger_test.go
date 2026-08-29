@@ -262,9 +262,10 @@ func TestCmdLogger(t *testing.T) {
 		})
 
 		// build the logger
+		ctx := t.Context()
 		dir := t.TempDir()
 		loggerBinFile := filepath.Join(dir, "logger")
-		cmd := exec.Command("go", "build", "-o", loggerBinFile, filepath.Join("testdata", "logger", "logger", "main.go"))
+		cmd := exec.CommandContext(ctx, "go", "build", "-o", loggerBinFile, filepath.Join("testdata", "logger", "logger", "main.go"))
 		if err := cmd.Run(); err != nil {
 			t.Fatalf("failed to build logger binary: %v", err)
 		}
