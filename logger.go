@@ -289,6 +289,9 @@ func (l *cmdLogger) wait() {
 
 func (l *cmdLogger) closePipe() {
 	if l.closed.CompareAndSwap(false, true) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+
 		// Ignore error on cleanup
 		l.pw.Close() //nolint:errcheck
 		l.pr.Close() //nolint:errcheck
