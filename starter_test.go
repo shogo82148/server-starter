@@ -19,11 +19,7 @@ import (
 )
 
 func Test_Start(t *testing.T) {
-	dir, err := os.MkdirTemp("", "server-starter-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %s", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	// build echod
 	binFile := filepath.Join(dir, "echod")
@@ -139,11 +135,7 @@ func Test_Start(t *testing.T) {
 }
 
 func Test_StartFail(t *testing.T) {
-	dir, err := os.MkdirTemp("", "server-starter-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %s", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	// build a server.
 	binFile := filepath.Join(dir, "echod")
@@ -206,11 +198,7 @@ func Test_StartFail(t *testing.T) {
 }
 
 func Test_KillOldDeplay(t *testing.T) {
-	dir, err := os.MkdirTemp("", "server-starter-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %s", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	// build echod
 	binFile := filepath.Join(dir, "killolddelay")
@@ -304,11 +292,7 @@ func Test_KillOldDeplay(t *testing.T) {
 }
 
 func Test_Unix(t *testing.T) {
-	dir, err := os.MkdirTemp("", "server-starter-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %s", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	// build echod
 	binFile := filepath.Join(dir, "unix")
@@ -361,11 +345,7 @@ func Test_Unix(t *testing.T) {
 }
 
 func Test_Dir(t *testing.T) {
-	dir, err := os.MkdirTemp("", "server-starter-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %s", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	// build server
 	binFile := filepath.Join(dir, "dir")
@@ -419,11 +399,7 @@ func Test_Dir(t *testing.T) {
 }
 
 func Test_AutoRestart(t *testing.T) {
-	dir, err := os.MkdirTemp("", "server-starter-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %s", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	// build echod
 	binFile := filepath.Join(dir, "autorestart")
@@ -526,11 +502,7 @@ func Test_AutoRestart(t *testing.T) {
 }
 
 func Test_EnvDir(t *testing.T) {
-	dir, err := os.MkdirTemp("", "server-starter-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %s", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	// set up envdir
 	envdir := filepath.Join(dir, "envdir")
@@ -615,11 +587,7 @@ func Test_EnvDir(t *testing.T) {
 }
 
 func Test_Logger(t *testing.T) {
-	dir, err := os.MkdirTemp("", "server-starter-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %s", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	// mock stderr
 	stderr := os.Stderr
@@ -695,11 +663,7 @@ func Test_Logger(t *testing.T) {
 }
 
 func Test_LoggerDies(t *testing.T) {
-	dir, err := os.MkdirTemp("", "server-starter-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %s", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	// build the server
 	serverBinFile := filepath.Join(dir, "server")
@@ -727,12 +691,7 @@ func Test_LoggerDies(t *testing.T) {
 
 func Test_RestartAndStop(t *testing.T) {
 	ctx := t.Context()
-
-	dir, err := os.MkdirTemp("", "server-starter-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp directory: %s", err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	// build echod
 	echod := filepath.Join(dir, "echod")
