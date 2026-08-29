@@ -49,13 +49,6 @@ jobs:
           - "1.25"
           - "1.24"
           - "1.23"
-          - "1.22"
-          - "1.21"
-          - "1.20"
-          - "1.19"
-          - "1.18"
-          - "1.17"
-          - "1.16"
 
     steps:
       - name: Set up Go ${{ matrix.go }}
@@ -68,16 +61,8 @@ jobs:
 
       - name: Test
         run: |
-          extra=()
-          if [[ "${{ matrix.os }}" == "macOS-latest" ]]; then
-            # Some Go versions can produce a Mach-O test binary without LC_UUID on macOS-latest.
-            # Force the system linker so dyld accepts the generated test binary.
-            extra+=(-ldflags=-linkmode=external)
-          fi
-          go test -v -race -coverprofile=profile.cov "${extra[@]}" ./...
+          go test -v -race -coverprofile=profile.cov ./...
         working-directory: listener
-        env:
-          GO111MODULE: "on"
 
       - name: Send coverage
         uses: shogo82148/actions-goveralls@8781f5dd05b691c4dd042d5e859c11c73e0104fa # v1.11.1
