@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -407,15 +408,16 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	}
 
 	s.generation++
+	env, err := buildWorkerEnv(s.EnvDir, strings.Join(ports, ";"), s.generation)
+	if err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(s.ctx)
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
 	cmd.Stdout = s.logger.Stdout()
 	cmd.Stderr = s.logger.Stderr()
 	cmd.ExtraFiles = files
-	env := os.Environ()
-	env = append(env, fmt.Sprintf("%s=%s", PortEnvName, strings.Join(ports, ";")))
-	env = append(env, fmt.Sprintf("%s=%d", GenerationEnvName, s.generation))
-	env = append(env, loadEnv(s.EnvDir)...)
 	cmd.Env = env
 	cmd.Dir = s.Dir
 	w := &worker{
@@ -436,6 +438,31 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	w.Wait()
 
 	return w, nil
+}
+
+func buildWorkerEnv(envdir, portSpec string, generation int) ([]string, error) {
+	overlay, err := loadEnv(envdir)
+	if err != nil {
+		return nil, err
+	}
+
+	env := os.Environ()
+	merged := make(map[string]string, len(env)+len(overlay))
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			merged[k] = v
+		}
+	}
+	maps.Copy(merged, overlay)
+	merged[PortEnvName] = portSpec
+	merged[GenerationEnvName] = strconv.Itoa(generation)
+
+	result := make([]string, 0, len(merged))
+	for k, v := range merged {
+		result = append(result, k+"="+v)
+	}
+	slices.Sort(result)
+	return result, nil
 }
 
 func (w *worker) Wait() {
