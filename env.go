@@ -1,54 +1,59 @@
 package starter
 
 import (
-	"bufio"
+	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-func loadEnv(dir string) []string {
-	env := []string{}
+const maxEnvValueBytes = 128 * 1024 // 128KiB
 
-	// ignore errors
+func loadEnv(dir string) (map[string]string, error) {
 	if dir == "" {
-		return env
-	}
-	stat, err := os.Stat(dir)
-	if err != nil || !stat.IsDir() {
-		return env
+		return nil, nil
 	}
 
-	filepath.Walk(dir, func(path string, fi os.FileInfo, err error) error {
-		// ignore errors
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	env := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		// skip dotfiles and directories
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || entry.Type()&os.ModeType != 0 {
+			continue
+		}
+
+		// read the value from the file
+		val, err := readEnvFile(filepath.Join(dir, name))
 		if err != nil {
-			return nil
+			return nil, err
 		}
+		env[name] = val
+	}
+	return env, nil
+}
 
-		// skip sub directories.
-		if fi.IsDir() && !os.SameFile(stat, fi) {
-			return filepath.SkipDir
-		}
+func readEnvFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close() //nolint:errcheck // ignore error on cleanup
 
-		// skip dotfiles
-		if strings.HasPrefix(fi.Name(), ".") {
-			return nil
-		}
-
-		f, err := os.Open(path)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-
-		name := filepath.Base(path)
-		scanner := bufio.NewScanner(f)
-		if scanner.Scan() {
-			value := scanner.Text()
-			env = append(env, name+"="+value)
-		}
-		return nil
-	})
-
-	return env
+	data, err := io.ReadAll(io.LimitReader(f, maxEnvValueBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if line, _, ok := bytes.Cut(data, []byte{'\n'}); ok {
+		return string(line), nil
+	}
+	if len(data) > maxEnvValueBytes {
+		return "", errors.New("env value exceeds maximum size of 128KiB")
+	}
+	return string(data), nil
 }

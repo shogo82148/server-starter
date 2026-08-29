@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -406,16 +407,20 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		ports[i] = fmt.Sprintf("%s=%d", addr(sock), i+3)
 	}
 
-	s.generation++
+	generation := s.generation + 1
+	env, err := buildWorkerEnv(s.EnvDir, strings.Join(ports, ";"), generation)
+	if err != nil {
+		for _, f := range files {
+			f.Close() //nolint:errcheck // ignore error on cleanup
+		}
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(s.ctx)
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
 	cmd.Stdout = s.logger.Stdout()
 	cmd.Stderr = s.logger.Stderr()
 	cmd.ExtraFiles = files
-	env := os.Environ()
-	env = append(env, fmt.Sprintf("%s=%s", PortEnvName, strings.Join(ports, ";")))
-	env = append(env, fmt.Sprintf("%s=%d", GenerationEnvName, s.generation))
-	env = append(env, loadEnv(s.EnvDir)...)
 	cmd.Env = env
 	cmd.Dir = s.Dir
 	w := &worker{
@@ -423,7 +428,7 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		cancel:     cancel,
 		cmd:        cmd,
 		done:       make(chan struct{}),
-		generation: s.generation,
+		generation: generation,
 		starter:    s,
 		chsig:      make(chan workerSignal),
 	}
@@ -432,10 +437,36 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		return nil, err
 	}
 
+	s.generation++
 	s.addWorker(w)
 	w.Wait()
 
 	return w, nil
+}
+
+func buildWorkerEnv(envdir, portSpec string, generation int) ([]string, error) {
+	overlay, err := loadEnv(envdir)
+	if err != nil {
+		return nil, err
+	}
+
+	env := os.Environ()
+	merged := make(map[string]string, len(env)+len(overlay))
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			merged[k] = v
+		}
+	}
+	maps.Copy(merged, overlay)
+	merged[PortEnvName] = portSpec
+	merged[GenerationEnvName] = strconv.Itoa(generation)
+
+	result := make([]string, 0, len(merged))
+	for k, v := range merged {
+		result = append(result, k+"="+v)
+	}
+	slices.Sort(result)
+	return result, nil
 }
 
 func (w *worker) Wait() {
