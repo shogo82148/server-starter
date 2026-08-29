@@ -199,7 +199,7 @@ func Test_StartFail(t *testing.T) {
 	}
 }
 
-func Test_KillOldDeplay(t *testing.T) {
+func Test_KillOldDelay(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
 
@@ -250,7 +250,7 @@ func Test_KillOldDeplay(t *testing.T) {
 
 	// Reload
 	// 0sec: start a new worker
-	// 1sec: if the new worker is still alive, sleep kill_old_deplay sec.
+	// 1sec: if the new worker is still alive, sleep kill_old_delay sec.
 	// 4sec: send SIGTERM to the old worker.
 	// 5sec: the old worker stops.
 	go sd.Reload()

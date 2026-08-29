@@ -54,7 +54,7 @@ type Starter struct {
 	// Signal to send when TERM is received
 	SignalOnTERM os.Signal
 
-	// KillOlddeplay is time to suspend to send a signal to the old worker.
+	// KillOldDelay is time to suspend to send a signal to the old worker.
 	KillOldDelay time.Duration
 
 	// if set, writes the status of the server process(es) to the file
