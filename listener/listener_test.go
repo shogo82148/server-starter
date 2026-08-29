@@ -48,7 +48,7 @@ func TestIsUnderStartServer(t *testing.T) {
 func TestGeneration(t *testing.T) {
 	t.Run("not under start_server", func(t *testing.T) {
 		unsetEnv(t, GenerationEnvName)
-		if gen, ok := Generation(); ok {
+		if gen, ok := Generation(); ok || gen != 0 {
 			t.Errorf("Generation() = %d, %v, want 0, false", gen, ok)
 		}
 	})
