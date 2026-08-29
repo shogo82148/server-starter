@@ -407,8 +407,8 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		ports[i] = fmt.Sprintf("%s=%d", addr(sock), i+3)
 	}
 
-	s.generation++
-	env, err := buildWorkerEnv(s.EnvDir, strings.Join(ports, ";"), s.generation)
+	generation := s.generation + 1
+	env, err := buildWorkerEnv(s.EnvDir, strings.Join(ports, ";"), generation)
 	if err != nil {
 		for _, f := range files {
 			f.Close() //nolint:errcheck // ignore error on cleanup
@@ -428,7 +428,7 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		cancel:     cancel,
 		cmd:        cmd,
 		done:       make(chan struct{}),
-		generation: s.generation,
+		generation: generation,
 		starter:    s,
 		chsig:      make(chan workerSignal),
 	}
@@ -437,6 +437,7 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		return nil, err
 	}
 
+	s.generation++
 	s.addWorker(w)
 	w.Wait()
 
