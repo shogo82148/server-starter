@@ -50,7 +50,7 @@ nfpms:
       - cli-amd64
     package_name: go-server-starter
     homepage: https://github.com/shogo82148/server-starter/
-    maintainer: Ichinose Shogo <shogo82148@gmail.com>
+    maintainer: ICHINOSE Shogo <shogo82148@gmail.com>
     description: Yet Another Go port of start_server by shogo82148
     license: MIT
     formats:
@@ -65,7 +65,7 @@ nfpms:
       - cli-arm64
     package_name: go-server-starter
     homepage: https://github.com/shogo82148/server-starter/
-    maintainer: Ichinose Shogo <shogo82148@gmail.com>
+    maintainer: ICHINOSE Shogo <shogo82148@gmail.com>
     description: Yet Another Go port of start_server by shogo82148
     license: MIT
     formats:
