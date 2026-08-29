@@ -7,10 +7,27 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+var pool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
+
+func getBuffer() *bytes.Buffer {
+	buf := pool.Get().(*bytes.Buffer)
+	buf.Reset()
+	return buf
+}
+
+func putBuffer(buf *bytes.Buffer) {
+	pool.Put(buf)
+}
 
 // logger is an interface of server-starter's logger.
 type logger interface {
@@ -34,44 +51,56 @@ type logger interface {
 	Close() error
 }
 
-// stdLogger is a logger that outputs into os.Stdout and os.Stderr
-type stdLogger struct{}
+var _ logger = &stdLogger{}
 
-func newStdLogger() logger {
-	return stdLogger{}
+// stdLogger is a logger that outputs into os.Stdout and os.Stderr
+type stdLogger struct {
+	mu sync.Mutex
 }
 
-func (stdLogger) Stdout() *os.File {
+func newStdLogger() logger {
+	return &stdLogger{}
+}
+
+func (*stdLogger) Stdout() *os.File {
 	return os.Stdout
 }
 
-func (stdLogger) Stderr() *os.File {
+func (*stdLogger) Stderr() *os.File {
 	return os.Stderr
 }
 
-func (stdLogger) Done() <-chan struct{} {
+func (*stdLogger) Done() <-chan struct{} {
 	return nil
 }
 
-func (stdLogger) Logf(format string, args ...any) {
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, format, args...)
+func (l *stdLogger) Logf(format string, args ...any) {
+	buf := getBuffer()
+	defer putBuffer(buf)
+	fmt.Fprintf(buf, format, args...)
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
-	os.Stderr.Write(buf.Bytes())
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	os.Stderr.Write(buf.Bytes()) //nolint:errcheck
 }
 
-func (stdLogger) Shutdown(ctx context.Context) error {
+func (*stdLogger) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (stdLogger) Close() error {
+func (*stdLogger) Close() error {
 	return nil
 }
 
+var _ logger = &fileLogger{}
+
+// fileLogger is a logger that outputs into a file.
 type fileLogger struct {
-	f *os.File
+	mu sync.Mutex
+	f  *os.File
 }
 
 func newFileLogger(filename string) (logger, error) {
@@ -95,12 +124,16 @@ func (*fileLogger) Done() <-chan struct{} {
 }
 
 func (l *fileLogger) Logf(format string, args ...any) {
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, format, args...)
+	buf := getBuffer()
+	defer putBuffer(buf)
+	fmt.Fprintf(buf, format, args...)
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
-	l.f.Write(buf.Bytes())
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.f.Write(buf.Bytes()) //nolint:errcheck
 }
 
 func (l *fileLogger) Shutdown(ctx context.Context) error {
@@ -108,8 +141,12 @@ func (l *fileLogger) Shutdown(ctx context.Context) error {
 }
 
 func (l *fileLogger) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return l.f.Close()
 }
+
+var _ logger = &cmdLogger{}
 
 // cmdLogger is a logger that outputs into stdin of a command.
 type cmdLogger struct {
@@ -119,6 +156,7 @@ type cmdLogger struct {
 	cmd    *exec.Cmd
 
 	closed atomic.Bool
+	mu     sync.Mutex
 	pr, pw *os.File
 }
 
@@ -146,8 +184,9 @@ func newCmdLogger(command string) (logger, error) {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		cancel()
-		pr.Close()
-		pw.Close()
+		// Ignore error on cleanup
+		pr.Close() //nolint:errcheck
+		pw.Close() //nolint:errcheck
 		return nil, err
 	}
 
@@ -176,15 +215,20 @@ func (l *cmdLogger) Done() <-chan struct{} {
 }
 
 func (l *cmdLogger) Logf(format string, args ...any) {
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, format, args...)
+	buf := getBuffer()
+	defer putBuffer(buf)
+
+	fmt.Fprintf(buf, format, args...)
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.closed.Load() {
-		os.Stderr.Write(buf.Bytes())
+		os.Stderr.Write(buf.Bytes()) //nolint:errcheck
 	} else {
-		l.pw.Write(buf.Bytes())
+		l.pw.Write(buf.Bytes()) //nolint:errcheck
 	}
 }
 
@@ -208,8 +252,9 @@ func (l *cmdLogger) Shutdown(ctx context.Context) error {
 	// send SIGTERM signal to the process group
 	// https://junkyard.song.mu/slides/gocon2019-spring/#53 (written in Japanese)
 	// https://github.com/Songmu/timeout/blob/9710262dc02f66fdd69a6cd4c8143204006d5843/timeout_unix.go#L21-L35
-	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM) // ignore errors because the logger maybe already stopped
-	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGCONT)
+	// ignore errors because the logger maybe already stopped
+	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM) //nolint:errcheck
+	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGCONT) //nolint:errcheck
 
 	// wait until the logger receives the signal
 	select {
@@ -227,7 +272,7 @@ func (l *cmdLogger) Close() error {
 	case <-l.done:
 	default:
 		// force to terminate the logger process
-		syscall.Kill(-l.cmd.Process.Pid, syscall.SIGKILL)
+		syscall.Kill(-l.cmd.Process.Pid, syscall.SIGKILL) //nolint:errcheck
 		l.cancel()
 		<-l.done
 	}
@@ -235,7 +280,7 @@ func (l *cmdLogger) Close() error {
 }
 
 func (l *cmdLogger) wait() {
-	l.cmd.Wait()
+	l.cmd.Wait() //nolint:errcheck // Ignore error on cleanup
 
 	// notify the logger process is stopped.
 	l.closePipe()
@@ -244,7 +289,11 @@ func (l *cmdLogger) wait() {
 
 func (l *cmdLogger) closePipe() {
 	if l.closed.CompareAndSwap(false, true) {
-		l.pw.Close()
-		l.pr.Close()
+		l.mu.Lock()
+		defer l.mu.Unlock()
+
+		// Ignore error on cleanup
+		l.pw.Close() //nolint:errcheck
+		l.pr.Close() //nolint:errcheck
 	}
 }
