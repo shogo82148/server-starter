@@ -45,6 +45,9 @@ func Generation() (int, bool) {
 	if err != nil {
 		return 0, false
 	}
+	if gen < 0 {
+		return 0, false
+	}
 	return gen, true
 }
 

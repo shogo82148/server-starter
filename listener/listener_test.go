@@ -73,6 +73,13 @@ func TestGeneration(t *testing.T) {
 			t.Errorf("Generation() = %d, %v, want 0, false", gen, ok)
 		}
 	})
+
+	t.Run("negative generation", func(t *testing.T) {
+		t.Setenv(GenerationEnvName, "-1")
+		if gen, ok := Generation(); ok || gen != 0 {
+			t.Errorf("Generation() = %d, %v, want 0, false", gen, ok)
+		}
+	})
 }
 
 func TestListenConfigs(t *testing.T) {
