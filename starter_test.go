@@ -27,7 +27,7 @@ func Test_Start(t *testing.T) {
 
 	// build echod
 	binFile := filepath.Join(dir, "echod")
-	cmd := exec.Command("go", "build", "-o", binFile, "testdata/echod/echod.go")
+	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "echod", "echod.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -147,7 +147,7 @@ func Test_StartFail(t *testing.T) {
 
 	// build a server.
 	binFile := filepath.Join(dir, "echod")
-	cmd := exec.Command("go", "build", "-o", binFile, "testdata/startfail/main.go")
+	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "startfail", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -214,7 +214,7 @@ func Test_KillOldDeplay(t *testing.T) {
 
 	// build echod
 	binFile := filepath.Join(dir, "killolddelay")
-	cmd := exec.Command("go", "build", "-o", binFile, "testdata/killolddelay/main.go")
+	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "killolddelay", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -313,7 +313,7 @@ func Test_Unix(t *testing.T) {
 	// build echod
 	binFile := filepath.Join(dir, "unix")
 	sockFile := filepath.Join(dir, "sock")
-	cmd := exec.Command("go", "build", "-o", binFile, "testdata/unix/main.go")
+	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "unix", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -369,7 +369,7 @@ func Test_Dir(t *testing.T) {
 
 	// build server
 	binFile := filepath.Join(dir, "dir")
-	cmd := exec.Command("go", "build", "-o", binFile, "testdata/dir/main.go")
+	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "dir", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -427,7 +427,7 @@ func Test_AutoRestart(t *testing.T) {
 
 	// build echod
 	binFile := filepath.Join(dir, "autorestart")
-	cmd := exec.Command("go", "build", "-o", binFile, "testdata/autorestart/main.go")
+	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "autorestart", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -642,14 +642,14 @@ func Test_Logger(t *testing.T) {
 
 	// build the server
 	serverBinFile := filepath.Join(dir, "server")
-	cmd := exec.Command("go", "build", "-o", serverBinFile, "testdata/logger/server/main.go")
+	cmd := exec.Command("go", "build", "-o", serverBinFile, filepath.Join("testdata", "logger", "server", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/server/main.go", err, output)
 	}
 
 	// build the logger
 	loggerBinFile := filepath.Join(dir, "logger")
-	cmd = exec.Command("go", "build", "-o", loggerBinFile, "testdata/logger/logger/main.go")
+	cmd = exec.Command("go", "build", "-o", loggerBinFile, filepath.Join("testdata", "logger", "logger", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/logger/main.go", err, output)
 	}
@@ -703,14 +703,14 @@ func Test_LoggerDies(t *testing.T) {
 
 	// build the server
 	serverBinFile := filepath.Join(dir, "server")
-	cmd := exec.Command("go", "build", "-o", serverBinFile, "testdata/logger/server/main.go")
+	cmd := exec.Command("go", "build", "-o", serverBinFile, filepath.Join("testdata", "logger", "server", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/server/main.go", err, output)
 	}
 
 	// build the logger
 	loggerBinFile := filepath.Join(dir, "sleep")
-	cmd = exec.Command("go", "build", "-o", loggerBinFile, "testdata/logger/sleep/main.go")
+	cmd = exec.Command("go", "build", "-o", loggerBinFile, filepath.Join("testdata", "logger", "sleep", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/sleep/main.go", err, output)
 	}
@@ -736,14 +736,14 @@ func Test_RestartAndStop(t *testing.T) {
 
 	// build echod
 	echod := filepath.Join(dir, "echod")
-	cmd := exec.Command("go", "build", "-o", echod, "testdata/echod/echod.go")
+	cmd := exec.Command("go", "build", "-o", echod, filepath.Join("testdata", "echod", "echod.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
 
 	// build start_server
 	startServer := filepath.Join(dir, "start_server")
-	cmd = exec.Command("go", "build", "-o", startServer, "cmd/start_server/main.go")
+	cmd = exec.Command("go", "build", "-o", startServer, filepath.Join("cmd", "start_server", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
