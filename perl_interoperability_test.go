@@ -2,20 +2,25 @@ package starter
 
 import (
 	"net"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"testing"
 	"time"
 )
 
+const interopRequiredEnv = "SERVER_STARTER_INTEROP_REQUIRED"
+
 func TestPerlInteroperabilityGoSupervisorRunsPerlWorker(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
+	perl, _ := requirePerlServerStarter(t)
 
 	// start the perl worker with the go supervisor.
 	signame := filepath.Join(dir, "signame")
 	sd := &Starter{
-		Command: "perl",
+		Command: perl,
 		Args:    []string{"testdata/01-starter-echod.pl", signame},
 		Ports:   []string{"0"},
 	}
@@ -52,5 +57,43 @@ func TestPerlInteroperabilityGoSupervisorRunsPerlWorker(t *testing.T) {
 	// shutdown the worker.
 	if err := sd.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown() returned error: %v", err)
+	}
+}
+
+// requirePerlServerStarter checks if the original Server::Starter is available.
+// If not, it skips the test unless SERVER_STARTER_INTEROP_REQUIRED is set.
+func requirePerlServerStarter(t *testing.T) (perlPath string, startServerPath string) {
+	t.Helper()
+
+	perlPath, err := exec.LookPath("perl")
+	if err != nil {
+		serverStarterUnavailable(t)
+		return
+	}
+	startServerPath, err = exec.LookPath("start_server")
+	if err != nil {
+		serverStarterUnavailable(t)
+		return
+	}
+	ctx := t.Context()
+	cmd := exec.CommandContext(ctx, perlPath, "-MServer::Starter", "-e", "1")
+	if err := cmd.Run(); err != nil {
+		serverStarterUnavailable(t)
+		return
+	}
+	cmd = exec.CommandContext(ctx, startServerPath, "--version")
+	if err := cmd.Run(); err != nil {
+		serverStarterUnavailable(t)
+		return
+	}
+	return perlPath, startServerPath
+}
+
+func serverStarterUnavailable(t *testing.T) {
+	message := "original Server::Starter is unavailable; install libserver-starter-perl"
+	if os.Getenv(interopRequiredEnv) != "" {
+		t.Fatal(message)
+	} else {
+		t.Skip(message)
 	}
 }
