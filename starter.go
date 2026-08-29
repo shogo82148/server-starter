@@ -410,6 +410,9 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	s.generation++
 	env, err := buildWorkerEnv(s.EnvDir, strings.Join(ports, ";"), s.generation)
 	if err != nil {
+		for _, f := range files {
+			f.Close() //nolint:errcheck // ignore error on cleanup
+		}
 		return nil, err
 	}
 
