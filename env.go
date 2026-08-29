@@ -39,7 +39,7 @@ func readEnvFile(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // ignore error on cleanup
 
 	scanner := bufio.NewScanner(f)
 	if scanner.Scan() {
