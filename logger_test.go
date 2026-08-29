@@ -3,7 +3,6 @@ package starter
 import (
 	"bytes"
 	"context"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,38 +107,48 @@ func BenchmarkStdLogger(b *testing.B) {
 	}
 }
 
-func captureFileLoggerOutput(t *testing.T, f func(l *fileLogger)) []byte {
+func captureFileLoggerOutput(t *testing.T, f func(l logger)) []byte {
 	t.Helper()
 
 	// Create a temporary file to capture the output
-	tmpfile, err := os.CreateTemp("", "filelogger_test")
-	if err != nil {
-		t.Fatalf("failed to create temp file: %v", err)
-	}
-	defer os.Remove(tmpfile.Name()) //nolint:errcheck // Ignore error on cleanup
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "filelogger_test.log")
 
 	// Call the function that writes to the file logger
-	logger := &fileLogger{f: tmpfile}
-	f(logger)
-
-	// Read the contents of the temporary file
-	if _, err := tmpfile.Seek(0, io.SeekStart); err != nil {
-		t.Fatalf("failed to seek to start of temp file: %v", err)
-	}
-	buf := new(bytes.Buffer)
-	_, err = buf.ReadFrom(tmpfile)
+	logger, err := newFileLogger(logFile)
 	if err != nil {
-		t.Fatalf("failed to read from temp file: %v", err)
+		t.Fatalf("failed to create file logger: %v", err)
 	}
+	f(logger)
 
 	if err := logger.Close(); err != nil {
 		t.Fatalf("Close() returned error: %v", err)
 	}
 
-	return buf.Bytes()
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("failed to read log file: %v", err)
+	}
+	return data
 }
 
 func TestFileLogger(t *testing.T) {
+	got := captureFileLoggerOutput(t, func(l logger) {
+		l.Logf("Hello, %s!", "world")
+	})
+	want := "Hello, world!\n"
+	if string(got) != want {
+		t.Errorf("Logf() wrote %q, want %q", got, want)
+	}
+
+	got = captureFileLoggerOutput(t, func(l logger) {
+		l.Logf("Hello, %s!\n", "world")
+	})
+	want = "Hello, world!\n"
+	if string(got) != want {
+		t.Errorf("Logf() wrote %q, want %q", got, want)
+	}
+
 	logger, err := newFileLogger(os.DevNull)
 	if err != nil {
 		t.Fatalf("failed to create file logger: %v", err)
@@ -153,22 +162,6 @@ func TestFileLogger(t *testing.T) {
 	}
 	if logger.Done() != nil {
 		t.Errorf("Done() = %v, want nil", logger.Done())
-	}
-
-	got := captureFileLoggerOutput(t, func(l *fileLogger) {
-		l.Logf("Hello, %s!", "world")
-	})
-	want := "Hello, world!\n"
-	if string(got) != want {
-		t.Errorf("Logf() wrote %q, want %q", got, want)
-	}
-
-	got = captureFileLoggerOutput(t, func(l *fileLogger) {
-		l.Logf("Hello, %s!\n", "world")
-	})
-	want = "Hello, world!\n"
-	if string(got) != want {
-		t.Errorf("Logf() wrote %q, want %q", got, want)
 	}
 
 	if err := logger.Shutdown(t.Context()); err != nil {
