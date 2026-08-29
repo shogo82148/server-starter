@@ -16,9 +16,37 @@ type ListenConfig interface {
 	ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error)
 }
 
-// PortEnvName is the environment name for server_starter configures.
-// copied from the starter package.
+// PortEnvName is the environment variable that carries the listener
+// specification.
 const PortEnvName = "SERVER_STARTER_PORT"
+
+// GenerationEnvName is the environment variable that carries the generation
+// number of the server_starter process. It is incremented every time a new
+// worker is started.
+const GenerationEnvName = "SERVER_STARTER_GENERATION"
+
+// IsUnderStartServer reports whether the calling process was spawned by the
+// start_server supervisor.
+func IsUnderStartServer() bool {
+	_, ok := os.LookupEnv(GenerationEnvName)
+	return ok
+}
+
+// Generation returns the generation number of the server_starter process.
+// It is incremented every time a new worker is started.
+// If the process was not started by server_starter, the second return value
+// will be false.
+func Generation() (int, bool) {
+	genStr, ok := os.LookupEnv(GenerationEnvName)
+	if !ok {
+		return 0, false
+	}
+	gen, err := strconv.Atoi(genStr)
+	if err != nil {
+		return 0, false
+	}
+	return gen, true
+}
 
 // ErrNoListeningTarget is returned by ListenAll calls
 // when the process is not started using server_starter.
@@ -45,7 +73,9 @@ type ListenSpec interface {
 
 // ListenSpecs holds a list of ListenConfig. This is here just for convenience
 // so that you can do
+//
 //	list.String()
+//
 // to get a string compatible with SERVER_STARTER_PORT
 type ListenSpecs []ListenSpec
 
@@ -341,8 +371,8 @@ func Ports() (ListenSpecs, error) {
 // Regardless of whether the process starts from the start_server command or not,
 // you can call Listen method.
 //
-//  lc, err := listener.PortsFallback()
-//  l, err := lc.Listen(ctx, "tcp", ":8080")
+//	lc, err := listener.PortsFallback()
+//	l, err := lc.Listen(ctx, "tcp", ":8080")
 func PortsFallback() (ListenConfig, error) {
 	ll, err := parseListenTargets(PortsSpecification())
 	if err == nil {
