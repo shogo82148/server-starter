@@ -1,11 +1,15 @@
 package starter
 
 import (
-	"bufio"
+	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+const maxEnvValueBytes = 128 * 1024 // 128KiB
 
 func loadEnv(dir string) (map[string]string, error) {
 	if dir == "" {
@@ -41,9 +45,15 @@ func readEnvFile(path string) (string, error) {
 	}
 	defer f.Close() //nolint:errcheck // ignore error on cleanup
 
-	scanner := bufio.NewScanner(f)
-	if scanner.Scan() {
-		return scanner.Text(), nil
+	data, err := io.ReadAll(io.LimitReader(f, maxEnvValueBytes+1))
+	if err != nil {
+		return "", err
 	}
-	return "", scanner.Err()
+	if line, _, ok := bytes.Cut(data, []byte{'\n'}); ok {
+		return string(line), nil
+	}
+	if len(data) > maxEnvValueBytes {
+		return "", errors.New("env value exceeds maximum size of 128KiB")
+	}
+	return string(data), nil
 }
