@@ -15,17 +15,28 @@ jobs:
           - "1.26"
 
     steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Set up Go ${{ matrix.go }}
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ matrix.go }}
 
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@53e33bb27be492a926eee378e8a5f7ff6618b061 # v1.43.1
+        with:
+          perl-version: "5.44"
+
+      - name: Install Server::Starter
+        run: |
+          cpanm --notest Server::Starter
 
       - name: Test
         run: |
           go test -v -race -coverprofile=profile.cov ./...
+        env:
+          SERVER_STARTER_INTEROP_REQUIRED: 1
 
       - name: Send coverage
         uses: shogo82148/actions-goveralls@8781f5dd05b691c4dd042d5e859c11c73e0104fa # v1.11.1
