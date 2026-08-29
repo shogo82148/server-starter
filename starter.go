@@ -315,7 +315,7 @@ type worker struct {
 type workerState int
 
 const (
-	// workerStateInit is initail status of worker.
+	// workerStateInit is initial status of worker.
 	// thw worker restarts itself if necessary.
 	workerStateInit workerState = iota
 
