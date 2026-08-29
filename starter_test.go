@@ -19,11 +19,12 @@ import (
 )
 
 func Test_Start(t *testing.T) {
+	ctx := t.Context()
 	dir := t.TempDir()
 
 	// build echod
 	binFile := filepath.Join(dir, "echod")
-	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "echod", "echod.go"))
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "echod", "echod.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -135,11 +136,12 @@ func Test_Start(t *testing.T) {
 }
 
 func Test_StartFail(t *testing.T) {
+	ctx := t.Context()
 	dir := t.TempDir()
 
 	// build a server.
 	binFile := filepath.Join(dir, "echod")
-	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "startfail", "main.go"))
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "startfail", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -198,11 +200,12 @@ func Test_StartFail(t *testing.T) {
 }
 
 func Test_KillOldDeplay(t *testing.T) {
+	ctx := t.Context()
 	dir := t.TempDir()
 
 	// build echod
 	binFile := filepath.Join(dir, "killolddelay")
-	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "killolddelay", "main.go"))
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "killolddelay", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -292,12 +295,13 @@ func Test_KillOldDeplay(t *testing.T) {
 }
 
 func Test_Unix(t *testing.T) {
+	ctx := t.Context()
 	dir := t.TempDir()
 
 	// build echod
 	binFile := filepath.Join(dir, "unix")
 	sockFile := filepath.Join(dir, "sock")
-	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "unix", "main.go"))
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "unix", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -345,11 +349,12 @@ func Test_Unix(t *testing.T) {
 }
 
 func Test_Dir(t *testing.T) {
+	ctx := t.Context()
 	dir := t.TempDir()
 
 	// build server
 	binFile := filepath.Join(dir, "dir")
-	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "dir", "main.go"))
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "dir", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -399,11 +404,12 @@ func Test_Dir(t *testing.T) {
 }
 
 func Test_AutoRestart(t *testing.T) {
+	ctx := t.Context()
 	dir := t.TempDir()
 
 	// build echod
 	binFile := filepath.Join(dir, "autorestart")
-	cmd := exec.Command("go", "build", "-o", binFile, filepath.Join("testdata", "autorestart", "main.go"))
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "autorestart", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -502,6 +508,7 @@ func Test_AutoRestart(t *testing.T) {
 }
 
 func Test_EnvDir(t *testing.T) {
+	ctx := t.Context()
 	dir := t.TempDir()
 
 	// set up envdir
@@ -517,7 +524,7 @@ func Test_EnvDir(t *testing.T) {
 
 	// build server
 	binFile := filepath.Join(dir, "env")
-	cmd := exec.Command("go", "build", "-o", binFile, "testdata/env/main.go")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "env", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
@@ -587,6 +594,7 @@ func Test_EnvDir(t *testing.T) {
 }
 
 func Test_Logger(t *testing.T) {
+	ctx := t.Context()
 	dir := t.TempDir()
 
 	// mock stderr
@@ -610,14 +618,14 @@ func Test_Logger(t *testing.T) {
 
 	// build the server
 	serverBinFile := filepath.Join(dir, "server")
-	cmd := exec.Command("go", "build", "-o", serverBinFile, filepath.Join("testdata", "logger", "server", "main.go"))
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", serverBinFile, filepath.Join("testdata", "logger", "server", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/server/main.go", err, output)
 	}
 
 	// build the logger
 	loggerBinFile := filepath.Join(dir, "logger")
-	cmd = exec.Command("go", "build", "-o", loggerBinFile, filepath.Join("testdata", "logger", "logger", "main.go"))
+	cmd = exec.CommandContext(ctx, "go", "build", "-o", loggerBinFile, filepath.Join("testdata", "logger", "logger", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/logger/main.go", err, output)
 	}
@@ -663,18 +671,19 @@ func Test_Logger(t *testing.T) {
 }
 
 func Test_LoggerDies(t *testing.T) {
+	ctx := t.Context()
 	dir := t.TempDir()
 
 	// build the server
 	serverBinFile := filepath.Join(dir, "server")
-	cmd := exec.Command("go", "build", "-o", serverBinFile, filepath.Join("testdata", "logger", "server", "main.go"))
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", serverBinFile, filepath.Join("testdata", "logger", "server", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/server/main.go", err, output)
 	}
 
 	// build the logger
 	loggerBinFile := filepath.Join(dir, "sleep")
-	cmd = exec.Command("go", "build", "-o", loggerBinFile, filepath.Join("testdata", "logger", "sleep", "main.go"))
+	cmd = exec.CommandContext(ctx, "go", "build", "-o", loggerBinFile, filepath.Join("testdata", "logger", "sleep", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/sleep/main.go", err, output)
 	}
@@ -695,14 +704,14 @@ func Test_RestartAndStop(t *testing.T) {
 
 	// build echod
 	echod := filepath.Join(dir, "echod")
-	cmd := exec.Command("go", "build", "-o", echod, filepath.Join("testdata", "echod", "echod.go"))
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", echod, filepath.Join("testdata", "echod", "echod.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
 
 	// build start_server
 	startServer := filepath.Join(dir, "start_server")
-	cmd = exec.Command("go", "build", "-o", startServer, filepath.Join("cmd", "start_server", "main.go"))
+	cmd = exec.CommandContext(ctx, "go", "build", "-o", startServer, filepath.Join("cmd", "start_server", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
 	}
