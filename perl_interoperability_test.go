@@ -51,7 +51,7 @@ func TestPerlInteroperabilityPerlSupervisorGoWorkerRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to do request: %s", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // ignore error on cleanup
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("Unexpected status code: %d", resp.StatusCode)
 	}
