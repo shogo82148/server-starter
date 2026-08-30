@@ -1,16 +1,76 @@
 package starter
 
 import (
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"syscall"
 	"testing"
 	"time"
 )
 
 const interopRequiredEnv = "SERVER_STARTER_INTEROP_REQUIRED"
+
+func TestPerlInteroperabilityPerlSupervisorGoWorkerRuns(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	perl, startServer := requirePerlServerStarter(t)
+
+	// build echod
+	binFile := filepath.Join(dir, "echod")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "interop", "main.go"))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
+	}
+
+	// start the go worker with the perl supervisor.
+	addrFile := filepath.Join(dir, "addr.txt")
+	cmd = exec.CommandContext(ctx, perl, startServer, "--port=127.0.0.1:0", "--", binFile, addrFile)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Failed to start %s: %s", startServer, err)
+	}
+
+	time.Sleep(1000 * time.Millisecond) // wait for starting worker
+
+	// connect to the worker.
+	addr, err := os.ReadFile(addrFile)
+	if err != nil {
+		t.Fatalf("Failed to read addr file: %s", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+string(addr), nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %s", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to do request: %s", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Unexpected status code: %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response body: %s", err)
+	}
+	if string(body) != "Hello, World!" {
+		t.Fatalf("Unexpected response body: %q", body)
+	}
+
+	// shutdown the worker.
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("Failed to send SIGTERM to %s: %s", startServer, err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("Failed to wait for %s: %s", startServer, err)
+	}
+}
 
 func TestPerlInteroperabilityGoSupervisorRunsPerlWorker(t *testing.T) {
 	ctx := t.Context()
