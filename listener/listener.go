@@ -273,7 +273,10 @@ func (ll ListenSpecs) ListenAll(ctx context.Context) ([]net.Listener, error) {
 	for _, lc := range ll {
 		l, err := lc.Listen()
 		if err != nil {
-			continue
+			for _, ln := range ret {
+				ln.Close() //nolint:errcheck // ignore error on cleanup
+			}
+			return nil, err
 		}
 		ret = append(ret, l)
 	}
@@ -286,7 +289,10 @@ func (ll ListenSpecs) ListenPacketAll(ctx context.Context) ([]net.PacketConn, er
 	for _, lc := range ll {
 		conn, err := lc.ListenPacket()
 		if err != nil {
-			continue
+			for _, ln := range ret {
+				ln.Close() //nolint:errcheck // ignore error on cleanup
+			}
+			return nil, err
 		}
 		ret = append(ret, conn)
 	}
@@ -330,12 +336,12 @@ func parseListenTargets(str string, ok bool) (ListenSpecs, error) {
 	ret := make([]ListenSpec, len(rawspec))
 
 	for i, pairString := range rawspec {
-		pair := strings.SplitN(pairString, "=", 2)
-		if len(pair) != 2 {
+		addr, fdString, ok := strings.Cut(pairString, "=")
+		if !ok {
 			return nil, fmt.Errorf("failed to parse '%s' as listen target", pairString)
 		}
-		addr := strings.TrimSpace(pair[0])
-		fdString := strings.TrimSpace(pair[1])
+		addr = strings.TrimSpace(addr)
+		fdString = strings.TrimSpace(fdString)
 		fd, err := strconv.ParseUint(fdString, 10, 0)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse '%s' as listen target: %s", pairString, err)
@@ -385,4 +391,22 @@ func PortsFallback() (ListenConfig, error) {
 		return nil, err
 	}
 	return &net.ListenConfig{}, nil
+}
+
+// ListenAll parses SERVER_STARTER_PORT and creates net.Listener objects.
+func ListenAll(ctx context.Context) ([]net.Listener, error) {
+	ll, err := Ports()
+	if err != nil {
+		return nil, err
+	}
+	return ll.ListenAll(ctx)
+}
+
+// ListenPacketAll parses SERVER_STARTER_PORT and creates net.PacketConn objects.
+func ListenPacketAll(ctx context.Context) ([]net.PacketConn, error) {
+	ll, err := Ports()
+	if err != nil {
+		return nil, err
+	}
+	return ll.ListenPacketAll(ctx)
 }
