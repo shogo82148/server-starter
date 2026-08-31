@@ -156,7 +156,7 @@ func (s *Starter) Run() error {
 			parentEnv[k] = v
 		}
 	}
-	parentEnv[PortEnvName] = s.EnvDir
+	parentEnv[EnvDirEnvName] = s.EnvDir
 	parentEnv[EnableAutoRestartEnvName] = formatBool(s.EnableAutoRestart)
 	parentEnv[KillOldDelayEnvName] = formatDuration(s.KillOldDelay)
 	parentEnv[AutoRestartIntervalEnvName] = formatDuration(s.AutoRestartInterval)
