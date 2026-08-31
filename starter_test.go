@@ -593,6 +593,25 @@ func Test_EnvDir(t *testing.T) {
 	}
 }
 
+func TestExtractCommand(t *testing.T) {
+	tests := []struct {
+		log     string
+		wantCmd string
+		wantOk  bool
+	}{
+		{"| echo hello", "echo hello", true},
+		{"   | echo hello", "echo hello", true},
+		{"echo hello", "", false},
+		{"", "", false},
+	}
+	for _, tt := range tests {
+		cmd, ok := extractCommand(tt.log)
+		if cmd != tt.wantCmd || ok != tt.wantOk {
+			t.Errorf("extractCommand(%q) = %q, %v; want %q, %v", tt.log, cmd, ok, tt.wantCmd, tt.wantOk)
+		}
+	}
+}
+
 func Test_Logger(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()

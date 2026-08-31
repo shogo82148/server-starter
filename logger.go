@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -162,7 +161,6 @@ type cmdLogger struct {
 
 func newCmdLogger(command string) (logger, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	command = strings.TrimSpace(command)
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Env = os.Environ()
 

@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 var errShutdown = errors.New("starter: now shutdown")
@@ -202,13 +203,25 @@ func (s *Starter) openPidFile() error {
 	return nil
 }
 
+// extractCommand extracts the command from the log string.
+// if the log string starts with '|', it is treated as a command.
+func extractCommand(log string) (string, bool) {
+	log = strings.TrimLeftFunc(log, unicode.IsSpace)
+	if len(log) == 0 || log[0] != '|' {
+		return "", false
+	}
+	log = log[1:]
+	log = strings.TrimLeftFunc(log, unicode.IsSpace)
+	return log, true
+}
+
 func (s *Starter) openLogFile() error {
 	if s.LogFile == "" {
 		s.logger = newStdLogger()
 		return nil
 	}
-	if s.LogFile[0] == '|' {
-		l, err := newCmdLogger(s.LogFile[1:])
+	if cmd, ok := extractCommand(s.LogFile); ok {
+		l, err := newCmdLogger(cmd)
 		if err != nil {
 			return err
 		}
