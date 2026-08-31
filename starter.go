@@ -911,7 +911,7 @@ func (s *Starter) autoRestartIntervalLocked() time.Duration {
 	}
 
 	if v, ok := s.getEnvLocked(AutoRestartIntervalEnvName); ok {
-		if d, err := parseDuration(v); err == nil {
+		if d, err := parseDuration(v); err == nil && d > 0 {
 			return d
 		} else {
 			s.logf("invalid %s format: %q: %v", AutoRestartIntervalEnvName, v, err)
