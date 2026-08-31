@@ -482,11 +482,10 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 
 // loadEnv loads the environment variables from EnvDir and stores them in dirEnv.
 func (s *Starter) loadEnv() error {
-	envDir := s.envDir()
-
 	s.muEnv.Lock()
 	defer s.muEnv.Unlock()
 
+	envDir, _ := s.getEnvLocked(EnvDirEnvName)
 	dirEnv, err := loadEnv(envDir)
 	if err != nil {
 		return err
@@ -862,13 +861,6 @@ func (s *Starter) getEnvLocked(key string) (string, bool) {
 		return v, true
 	}
 	return "", false
-}
-
-func (s *Starter) envDir() string {
-	s.muEnv.RLock()
-	defer s.muEnv.RUnlock()
-	dir, _ := s.getEnvLocked(EnvDirEnvName)
-	return dir
 }
 
 func (s *Starter) interval() time.Duration {
