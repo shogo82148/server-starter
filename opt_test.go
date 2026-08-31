@@ -139,6 +139,7 @@ func TestParseDuration(t *testing.T) {
 		{"4h", 4 * time.Hour},
 		{"12h34m", 12*time.Hour + 34*time.Minute},
 		{"9223372036", 9223372036 * time.Second},
+		{"9223372036.854775807", 9223372036*time.Second + 854775807*time.Nanosecond},
 	}
 
 	for _, tc := range testCases {
