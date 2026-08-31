@@ -24,11 +24,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	ll, err := listener.Ports()
-	if err != nil {
-		log.Fatal(err)
-	}
-	l, err := ll.ListenAll(context.Background())
+	l, err := listener.ListenAll(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -42,7 +38,7 @@ func main() {
 }
 
 func handle(conn net.Conn) {
-	conn.Write([]byte(os.Getenv("SERVER_STARTER_GENERATION")))
+	conn.Write([]byte(os.Getenv(listener.GenerationEnvName)))
 	conn.Close()
 }
 

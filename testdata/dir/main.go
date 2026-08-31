@@ -5,16 +5,16 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/shogo82148/server-starter/listener"
 )
 
 func main() {
-	ll, err := listener.Ports()
-	if err != nil {
-		log.Fatal(err)
-	}
-	l, err := ll.ListenAll(context.Background())
+	go watchSignal()
+
+	l, err := listener.ListenAll(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -33,4 +33,13 @@ func handle(conn net.Conn) {
 		log.Fatal(err)
 	}
 	conn.Write([]byte(dir))
+	conn.Close()
+}
+
+func watchSignal() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGTERM, syscall.SIGUSR1)
+	for range c {
+		os.Exit(0)
+	}
 }
