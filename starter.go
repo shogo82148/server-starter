@@ -322,9 +322,9 @@ func (s *Starter) autoRestarter() {
 		case <-ch:
 			cnt++
 			if cnt == 1 {
-				s.logf("autorestart triggered (interval=%s)", interval)
+				s.logf("autorestart triggered (interval=%s)", formatDuration(interval))
 			} else {
-				s.logf("autorestart triggered (forced, interval=%s)", interval)
+				s.logf("autorestart triggered (forced, interval=%s)", formatDuration(interval))
 			}
 			if s.tryToLockReload() {
 				go func() {
