@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -419,7 +420,7 @@ func Test_AutoRestart(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
 
-	// build echod
+	// build autorestart
 	binFile := filepath.Join(dir, "autorestart")
 	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "autorestart", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -519,7 +520,7 @@ func Test_AutoRestart(t *testing.T) {
 	}
 }
 
-func Test_EnvDir(t *testing.T) {
+func Test_Env(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
 
@@ -528,8 +529,96 @@ func Test_EnvDir(t *testing.T) {
 	if err := os.Mkdir(envdir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	os.Unsetenv("FOO")
-	envfile := filepath.Join(envdir, "FOO")
+
+	// build server
+	binFile := filepath.Join(dir, "env")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "env", "main.go"))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
+	}
+
+	sd := &Starter{
+		Command:           binFile,
+		Ports:             []string{"0"},
+		EnvDir:            envdir,
+		EnableAutoRestart: true,
+	}
+	defer sd.Close() //nolint:errcheck // ignore error on cleanup
+	go func() {
+		if err := sd.Run(); err != nil {
+			t.Errorf("sd.Run() failed: %s", err)
+		}
+	}()
+
+	time.Sleep(500 * time.Millisecond) // wait for starting worker
+
+	getEnv := func(ctx context.Context, key string) (string, error) {
+		// connect to the worker.
+		addr := sd.Listeners()[0].Addr().String()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/"+key, nil)
+		if err != nil {
+			return "", err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", err
+		}
+		return string(body), nil
+	}
+
+	v, err := getEnv(ctx, EnvDirEnvName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != envdir {
+		t.Errorf("want %q, got %q", envdir, v)
+	}
+
+	v, err = getEnv(ctx, EnableAutoRestartEnvName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "1" {
+		t.Errorf("want 1, got %q", v)
+	}
+
+	v, err = getEnv(ctx, AutoRestartIntervalEnvName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "3600" {
+		t.Errorf("want 3600, got %q", v)
+	}
+
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Fatalf("sd.Shutdown() failed: %s", err)
+	}
+}
+
+func Test_EnvDir(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+
+	const envName = "FOO"
+	original, ok := os.LookupEnv(envName)
+	if ok {
+		t.Cleanup(func() {
+			os.Setenv(envName, original)
+		})
+	}
+	os.Unsetenv(envName)
+
+	// set up envdir
+	envdir := filepath.Join(dir, "envdir")
+	if err := os.Mkdir(envdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	envfile := filepath.Join(envdir, envName)
 	if err := os.WriteFile(envfile, []byte(" old env \nsecond line will be ignored.\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -555,23 +644,31 @@ func Test_EnvDir(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond) // wait for starting worker
 
-	getEnv := func() string {
+	getEnv := func(ctx context.Context, key string) (string, error) {
 		// connect to the worker.
 		addr := sd.Listeners()[0].Addr().String()
-		conn, err := net.Dial("tcp", addr)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/"+key, nil)
 		if err != nil {
-			t.Fatalf("fail to dial: %s", err)
+			return "", err
 		}
-		defer conn.Close()
-		if _, err := conn.Write([]byte("hello")); err != nil {
-			t.Fatalf("fail to write: %s", err)
-		}
-		var buf [1024 * 1024]byte
-		n, err := conn.Read(buf[:])
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			t.Fatalf("fail to read: %s", err)
+			return "", err
 		}
-		return string(buf[:n])
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", err
+		}
+		return string(body), nil
+	}
+
+	v, err := getEnv(ctx, envName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != " old env " {
+		t.Errorf("want  old env , got %q", v)
 	}
 
 	// rewrite envdir...
@@ -580,18 +677,24 @@ func Test_EnvDir(t *testing.T) {
 	}
 
 	// ... but the worker returns the old environment value before reload.
-	v := getEnv()
-	if v != "FOO= old env " {
-		t.Errorf("want FOO= old env, got %s", v)
+	v, err = getEnv(ctx, envName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != " old env " {
+		t.Errorf("want  old env , got %q", v)
 	}
 
 	// after reload, we can get the new environment value
 	time.Sleep(1 * time.Second)
 	go sd.Reload()
 	time.Sleep(2 * time.Second)
-	v = getEnv()
-	if v != "FOO=new env" {
-		t.Errorf("want FOO=new env, got %s", v)
+	v, err = getEnv(ctx, envName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "new env" {
+		t.Errorf("want new env, got %q", v)
 	}
 
 	if err := os.Remove(envfile); err != nil {
@@ -599,9 +702,12 @@ func Test_EnvDir(t *testing.T) {
 	}
 	go sd.Reload()
 	time.Sleep(2 * time.Second)
-	v = getEnv()
+	v, err = getEnv(ctx, envName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if v != "not found!" {
-		t.Errorf("want not found!, got %s", v)
+		t.Errorf("want not found!, got %q", v)
 	}
 }
 

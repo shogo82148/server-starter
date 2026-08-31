@@ -491,6 +491,7 @@ func (s *Starter) loadEnv() error {
 		return err
 	}
 	s.dirEnv = dirEnv
+	s.dirEnv[AutoRestartIntervalEnvName] = formatDuration(s.autoRestartIntervalLocked())
 	return nil
 }
 
@@ -911,7 +912,10 @@ func (s *Starter) autoRestartIntervalLocked() time.Duration {
 	}
 
 	if v, ok := s.getEnvLocked(AutoRestartIntervalEnvName); ok {
-		if d, err := parseDuration(v); err == nil && d > 0 {
+		if d, err := parseDuration(v); err == nil {
+			if d <= 0 {
+				return defaultAutoRestartInterval
+			}
 			return d
 		} else {
 			s.logf("invalid %s format: %q: %v", AutoRestartIntervalEnvName, v, err)
