@@ -149,10 +149,11 @@ var _ logger = &cmdLogger{}
 
 // cmdLogger is a logger that outputs into stdin of a command.
 type cmdLogger struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	done   chan struct{}
-	cmd    *exec.Cmd
+	ctx     context.Context
+	cancel  context.CancelFunc
+	done    chan struct{}
+	command string
+	cmd     *exec.Cmd
 
 	closed atomic.Bool
 	mu     sync.Mutex
@@ -161,13 +162,6 @@ type cmdLogger struct {
 
 func newCmdLogger(command string) (logger, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Env = os.Environ()
-
-	// make a logger process a group leader
-	// https://junkyard.song.mu/slides/gocon2019-spring/#48 (written in Japanese)
-	// https://github.com/Songmu/timeout/blob/9710262dc02f66fdd69a6cd4c8143204006d5843/timeout_unix.go#L14-L19
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	// set log output the stdin of the logger process
 	pr, pw, err := os.Pipe()
@@ -175,11 +169,7 @@ func newCmdLogger(command string) (logger, error) {
 		cancel()
 		return nil, err
 	}
-	cmd.Stdin = pr
-
-	// configure stdout and stderr of the logger process
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd := newLoggerCmd(ctx, command, pr)
 	if err := cmd.Start(); err != nil {
 		cancel()
 		// Ignore error on cleanup
@@ -189,15 +179,30 @@ func newCmdLogger(command string) (logger, error) {
 	}
 
 	l := &cmdLogger{
-		ctx:    ctx,
-		cancel: cancel,
-		done:   make(chan struct{}),
-		cmd:    cmd,
-		pr:     pr,
-		pw:     pw,
+		ctx:     ctx,
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		command: command,
+		cmd:     cmd,
+		pr:      pr,
+		pw:      pw,
 	}
 	go l.wait()
 	return l, nil
+}
+
+func newLoggerCmd(ctx context.Context, command string, stdin *os.File) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Env = os.Environ()
+	cmd.Stdin = stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// make a logger process a group leader
+	// https://junkyard.song.mu/slides/gocon2019-spring/#48 (written in Japanese)
+	// https://github.com/Songmu/timeout/blob/9710262dc02f66fdd69a6cd4c8143204006d5843/timeout_unix.go#L14-L19
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return cmd
 }
 
 func (l *cmdLogger) Stdout() *os.File {
@@ -251,8 +256,8 @@ func (l *cmdLogger) Shutdown(ctx context.Context) error {
 	// https://junkyard.song.mu/slides/gocon2019-spring/#53 (written in Japanese)
 	// https://github.com/Songmu/timeout/blob/9710262dc02f66fdd69a6cd4c8143204006d5843/timeout_unix.go#L21-L35
 	// ignore errors because the logger maybe already stopped
-	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGTERM) //nolint:errcheck
-	syscall.Kill(-l.cmd.Process.Pid, syscall.SIGCONT) //nolint:errcheck
+	l.signal(syscall.SIGTERM)
+	l.signal(syscall.SIGCONT)
 
 	// wait until the logger receives the signal
 	select {
@@ -270,7 +275,7 @@ func (l *cmdLogger) Close() error {
 	case <-l.done:
 	default:
 		// force to terminate the logger process
-		syscall.Kill(-l.cmd.Process.Pid, syscall.SIGKILL) //nolint:errcheck
+		l.signal(syscall.SIGKILL)
 		l.cancel()
 		<-l.done
 	}
@@ -278,11 +283,31 @@ func (l *cmdLogger) Close() error {
 }
 
 func (l *cmdLogger) wait() {
-	l.cmd.Wait() //nolint:errcheck // Ignore error on cleanup
+	for {
+		l.mu.Lock()
+		cmd := l.cmd
+		l.mu.Unlock()
+		cmd.Wait() //nolint:errcheck // The logger is restarted after an unexpected exit.
 
-	// notify the logger process is stopped.
-	l.closePipe()
-	close(l.done)
+		if l.closed.Load() {
+			l.pr.Close() //nolint:errcheck // Ignore error on cleanup
+			close(l.done)
+			return
+		}
+
+		// Keep the pipe itself alive so existing workers continue writing to the
+		// same file descriptor while only the logger process is replaced.
+		for !l.closed.Load() {
+			cmd = newLoggerCmd(l.ctx, l.command, l.pr)
+			if err := cmd.Start(); err == nil {
+				l.mu.Lock()
+				l.cmd = cmd
+				l.mu.Unlock()
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 }
 
 func (l *cmdLogger) closePipe() {
@@ -292,6 +317,13 @@ func (l *cmdLogger) closePipe() {
 
 		// Ignore error on cleanup
 		l.pw.Close() //nolint:errcheck
-		l.pr.Close() //nolint:errcheck
+	}
+}
+
+func (l *cmdLogger) signal(sig syscall.Signal) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cmd.Process != nil {
+		syscall.Kill(-l.cmd.Process.Pid, sig) //nolint:errcheck
 	}
 }
