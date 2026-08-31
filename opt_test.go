@@ -126,3 +126,52 @@ func TestParseArgs(t *testing.T) {
 		}
 	})
 }
+
+func TestParseDuration(t *testing.T) {
+	testCases := []struct {
+		input    string
+		expected time.Duration
+	}{
+		{"1", 1 * time.Second},
+		{"1.5", 1500 * time.Millisecond},
+		{"2s", 2 * time.Second},
+		{"3m", 3 * time.Minute},
+		{"4h", 4 * time.Hour},
+		{"12h34m", 12*time.Hour + 34*time.Minute},
+		{"9223372036", 9223372036 * time.Second},
+		{"9223372036.854775807", 9223372036*time.Second + 854775807*time.Nanosecond},
+		{"9223372036.854775807s", 9223372036*time.Second + 854775807*time.Nanosecond},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.input, func(t *testing.T) {
+			d, err := parseDuration(tc.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if d != tc.expected {
+				t.Errorf("expected %v, got %v", tc.expected, d)
+			}
+		})
+	}
+
+	errorCases := []string{
+		"9223372036.854775808",
+		"9223372036.854775808s",
+		"nan",
+		"inf",
+		"-1",
+		"-1s",
+		"invalid",
+		"1m2",
+	}
+
+	for _, input := range errorCases {
+		t.Run(input, func(t *testing.T) {
+			_, err := parseDuration(input)
+			if err == nil {
+				t.Fatalf("expected error for input %q, got nil", input)
+			}
+		})
+	}
+}

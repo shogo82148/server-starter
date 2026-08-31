@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -144,13 +143,24 @@ func ParseArgs(args []string) (*Starter, error) {
 }
 
 func parseDuration(s string) (time.Duration, error) {
-	v, err := strconv.ParseFloat(s, 64)
-	if err == nil {
-		return time.Duration(v * float64(time.Second)), nil
-	}
 	d, err := time.ParseDuration(s)
 	if err == nil {
+		if d < 0 {
+			return 0, fmt.Errorf("duration must be non-negative: %q", s)
+		}
 		return d, nil
 	}
-	return 0, fmt.Errorf("invalid format: %s", s)
+	for _, ch := range s {
+		if (ch < '0' || ch > '9') && ch != '.' {
+			return 0, fmt.Errorf("invalid format: %q", s)
+		}
+	}
+	d, err = time.ParseDuration(s + "s")
+	if err == nil {
+		if d < 0 {
+			return 0, fmt.Errorf("duration must be non-negative: %q", s)
+		}
+		return d, nil
+	}
+	return 0, fmt.Errorf("invalid format: %q", s)
 }
