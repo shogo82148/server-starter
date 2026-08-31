@@ -20,11 +20,7 @@ func main() {
 	go watchSignal()
 
 	pid = []byte(strconv.Itoa(os.Getpid()))
-	ll, err := listener.Ports()
-	if err != nil {
-		log.Fatal(err)
-	}
-	l, err := ll.ListenAll(context.Background())
+	l, err := listener.ListenAll(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}

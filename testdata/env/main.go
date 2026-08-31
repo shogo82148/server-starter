@@ -28,11 +28,7 @@ func main() {
 		Handler: mux,
 	}
 
-	ll, err := listener.Ports()
-	if err != nil {
-		log.Fatal(err)
-	}
-	l, err := ll.ListenAll(context.Background())
+	l, err := listener.ListenAll(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
