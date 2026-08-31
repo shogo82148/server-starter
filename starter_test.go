@@ -436,7 +436,7 @@ func Test_AutoRestart(t *testing.T) {
 		EnableAutoRestart:   true,
 		AutoRestartInterval: 6 * time.Second,
 	}
-	defer sd.Shutdown(context.Background())
+	defer sd.Close() //nolint:errcheck // ignore error on cleanup
 	go func() {
 		if err := sd.Run(); err != nil {
 			t.Errorf("sd.Run() failed: %s", err)
@@ -517,6 +517,10 @@ func Test_AutoRestart(t *testing.T) {
 	pid2 := string(buf[:bytes.IndexByte(buf[:], ':')])
 	if pid1 == pid2 {
 		t.Errorf("want another, got %s", pid2)
+	}
+
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Errorf("sd.Shutdown() failed: %s", err)
 	}
 }
 
