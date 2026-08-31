@@ -150,6 +150,11 @@ func parseDuration(s string) (time.Duration, error) {
 		}
 		return d, nil
 	}
+	for _, ch := range s {
+		if (ch < '0' || ch > '9') && ch != '.' {
+			return 0, fmt.Errorf("invalid format: %q", s)
+		}
+	}
 	d, err = time.ParseDuration(s + "s")
 	if err == nil {
 		if d < 0 {

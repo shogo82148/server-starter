@@ -140,6 +140,7 @@ func TestParseDuration(t *testing.T) {
 		{"12h34m", 12*time.Hour + 34*time.Minute},
 		{"9223372036", 9223372036 * time.Second},
 		{"9223372036.854775807", 9223372036*time.Second + 854775807*time.Nanosecond},
+		{"9223372036.854775807s", 9223372036*time.Second + 854775807*time.Nanosecond},
 	}
 
 	for _, tc := range testCases {
@@ -154,52 +155,23 @@ func TestParseDuration(t *testing.T) {
 		})
 	}
 
-	t.Run("too large float value", func(t *testing.T) {
-		_, err := parseDuration("9223372037")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
+	errorCases := []string{
+		"9223372036.854775808",
+		"9223372036.854775808s",
+		"nan",
+		"inf",
+		"-1",
+		"-1s",
+		"invalid",
+		"1m2",
+	}
 
-	t.Run("too large duration", func(t *testing.T) {
-		_, err := parseDuration("9223372037s")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
-
-	t.Run("nan", func(t *testing.T) {
-		_, err := parseDuration("nan")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
-
-	t.Run("inf", func(t *testing.T) {
-		_, err := parseDuration("inf")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
-
-	t.Run("negative float value", func(t *testing.T) {
-		_, err := parseDuration("-1")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
-
-	t.Run("negative duration", func(t *testing.T) {
-		_, err := parseDuration("-1s")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
-
-	t.Run("invalid format", func(t *testing.T) {
-		_, err := parseDuration("invalid")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-	})
+	for _, input := range errorCases {
+		t.Run(input, func(t *testing.T) {
+			_, err := parseDuration(input)
+			if err == nil {
+				t.Fatalf("expected error for input %q, got nil", input)
+			}
+		})
+	}
 }
