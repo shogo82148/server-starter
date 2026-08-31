@@ -103,6 +103,10 @@ type Starter struct {
 	cancel     context.CancelFunc
 	pidFile    *os.File
 
+	muEnv     sync.RWMutex
+	parentEnv map[string]string // parentEnv is the environment variables of the parent process.
+	dirEnv    map[string]string // dirEnv is the environment variables from EnvDir.
+
 	// wait group for workers
 	wgWorker sync.WaitGroup
 
@@ -144,10 +148,27 @@ func (s *Starter) Run() error {
 		return errors.New("command is required")
 	}
 
+	// capture the parent environment variables
+	env := os.Environ()
+	parentEnv := make(map[string]string, len(env))
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			parentEnv[k] = v
+		}
+	}
+	parentEnv[PortEnvName] = s.EnvDir
+	parentEnv[EnableAutoRestartEnvName] = formatBool(s.EnableAutoRestart)
+	parentEnv[KillOldDelayEnvName] = formatDuration(s.KillOldDelay)
+	parentEnv[AutoRestartIntervalEnvName] = formatDuration(s.AutoRestartInterval)
+	s.muEnv.Lock()
+	s.parentEnv = parentEnv
+	s.dirEnv = make(map[string]string)
+	s.muEnv.Unlock()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	s.cancel = cancel
-	defer s.Close()
+	defer s.Close() //nolint: errcheck // ignore error on cleanup
 
 	// block reload during start up
 	s.lockReload()
@@ -198,7 +219,9 @@ func (s *Starter) openPidFile() error {
 	if err := flock(f.Fd(), syscall.LOCK_EX); err != nil {
 		return err
 	}
-	fmt.Fprintf(f, "%d\n", os.Getpid())
+	if _, err := fmt.Fprintf(f, "%d\n", os.Getpid()); err != nil {
+		return err
+	}
 	s.pidFile = f
 	return nil
 }
@@ -395,6 +418,11 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	defer func() {
 		<-ch
 	}()
+
+	if err := s.loadEnv(); err != nil {
+		return nil, fmt.Errorf("failed to load env dir: %w", err)
+	}
+
 	addr := func(sock socket) string {
 		if addr, ok := sock.(interface{ Addr() net.Addr }); ok {
 			return addr.Addr().String()
@@ -419,22 +447,15 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		// index + 3, so we can just hard code it
 		ports[i] = fmt.Sprintf("%s=%d", addr(sock), i+3)
 	}
+	portsSpec := strings.Join(ports, ";")
 
 	generation := s.generation + 1
-	env, err := buildWorkerEnv(s.EnvDir, strings.Join(ports, ";"), generation)
-	if err != nil {
-		for _, f := range files {
-			f.Close() //nolint:errcheck // ignore error on cleanup
-		}
-		return nil, err
-	}
-
 	ctx, cancel := context.WithCancel(s.ctx)
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
 	cmd.Stdout = s.logger.Stdout()
 	cmd.Stderr = s.logger.Stderr()
 	cmd.ExtraFiles = files
-	cmd.Env = env
+	cmd.Env = s.buildWorkerEnv(portsSpec, generation)
 	cmd.Dir = s.Dir
 	w := &worker{
 		ctx:        ctx,
@@ -457,29 +478,38 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	return w, nil
 }
 
-func buildWorkerEnv(envdir, portSpec string, generation int) ([]string, error) {
-	overlay, err := loadEnv(envdir)
-	if err != nil {
-		return nil, err
-	}
+// loadEnv loads the environment variables from EnvDir and stores them in dirEnv.
+func (s *Starter) loadEnv() error {
+	envDir := s.envDir()
 
-	env := os.Environ()
-	merged := make(map[string]string, len(env)+len(overlay))
-	for _, kv := range env {
-		if k, v, ok := strings.Cut(kv, "="); ok {
-			merged[k] = v
-		}
+	s.muEnv.Lock()
+	defer s.muEnv.Unlock()
+
+	dirEnv, err := loadEnv(envDir)
+	if err != nil {
+		return err
 	}
-	maps.Copy(merged, overlay)
+	s.dirEnv = dirEnv
+	return nil
+}
+
+// buildWorkerEnv builds the environment variables for the worker process.
+func (s *Starter) buildWorkerEnv(portSpec string, generation int) []string {
+	s.muEnv.RLock()
+	defer s.muEnv.RUnlock()
+
+	merged := make(map[string]string, len(s.parentEnv)+len(s.dirEnv)+2)
+	maps.Copy(merged, s.parentEnv)
+	maps.Copy(merged, s.dirEnv)
 	merged[PortEnvName] = portSpec
 	merged[GenerationEnvName] = strconv.Itoa(generation)
 
-	result := make([]string, 0, len(merged))
+	env := make([]string, 0, len(merged))
 	for k, v := range merged {
-		result = append(result, k+"="+v)
+		env = append(env, k+"="+v)
 	}
-	slices.Sort(result)
-	return result, nil
+	slices.Sort(env)
+	return env
 }
 
 func (w *worker) Wait() {
@@ -818,6 +848,15 @@ func (s *Starter) getChRestarter() chan struct{} {
 		s.chrestarter = make(chan struct{})
 	}
 	return s.chrestarter
+}
+
+func (s *Starter) envDir() string {
+	s.muEnv.RLock()
+	defer s.muEnv.RUnlock()
+	if dir, ok := s.dirEnv[EnvDirEnvName]; ok {
+		return dir
+	}
+	return s.EnvDir
 }
 
 func (s *Starter) interval() time.Duration {

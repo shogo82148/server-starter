@@ -38,7 +38,9 @@ func Test_Start(t *testing.T) {
 			StatusFile:  statusFile,
 			SignalOnHUP: signal,
 		}
-		defer sd.Shutdown(context.Background())
+		t.Cleanup(func() {
+			sd.Close() //nolint:errcheck // ignore error on cleanup
+		})
 		go func() {
 			if err := sd.Run(); err != nil {
 				t.Errorf("sd.Run() failed: %s", err)
@@ -65,7 +67,9 @@ func Test_Start(t *testing.T) {
 			t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
 		}
 		pid1 := string(buf[:bytes.IndexByte(buf[:], ':')])
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			t.Fatalf("fail to close: %s", err)
+		}
 
 		time.Sleep(3 * time.Second)
 		status, err := os.ReadFile(statusFile)
@@ -80,7 +84,11 @@ func Test_Start(t *testing.T) {
 		// 0sec: start a new worker
 		// 1sec: if the new worker is still alive, send SIGTERM to the old one.
 		// 3sec: the old worker stops.
-		go sd.Reload()
+		go func() {
+			if err := sd.Reload(); err != nil {
+				t.Errorf("sd.Reload() failed: %s", err)
+			}
+		}()
 		time.Sleep(2 * time.Second)
 		status, err = os.ReadFile(statusFile)
 		if err != nil {
@@ -125,6 +133,10 @@ func Test_Start(t *testing.T) {
 		pid2 := string(buf[:bytes.IndexByte(buf[:], ':')])
 		if pid1 == pid2 {
 			t.Errorf("want another, got %s", pid2)
+		}
+
+		if err := sd.Shutdown(ctx); err != nil {
+			t.Errorf("sd.Shutdown() failed: %s", err)
 		}
 	}
 	t.Run("TERM", func(t *testing.T) {

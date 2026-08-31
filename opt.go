@@ -4,9 +4,22 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// EnvDirEnvName is the environment variable name for EnvDir.
+const EnvDirEnvName = "ENVDIR"
+
+// EnableAutoRestartEnvName is the environment variable name for EnableAutoRestart.
+const EnableAutoRestartEnvName = "ENABLE_AUTO_RESTART"
+
+// KillOldDelayEnvName is the environment variable name for KillOldDelay.
+const KillOldDelayEnvName = "KILL_OLD_DELAY"
+
+// AutoRestartIntervalEnvName is the environment variable name for AutoRestartInterval.
+const AutoRestartIntervalEnvName = "AUTO_RESTART_INTERVAL"
 
 type errorList []error
 
@@ -27,10 +40,14 @@ func ParseArgs(args []string) (*Starter, error) {
 	var killOldDelay, autoRestartInterval string
 
 	// read from the environment value.
-	s.EnvDir = os.Getenv("ENVDIR")
-	s.EnableAutoRestart = os.Getenv("ENABLE_AUTO_RESTART") != "" && os.Getenv("ENABLE_AUTO_RESTART") != "0"
-	killOldDelay = os.Getenv("KILL_OLD_DELAY")
-	autoRestartInterval = os.Getenv("AUTO_RESTART_INTERVAL")
+	s.EnvDir = os.Getenv(EnvDirEnvName)
+	enableAutoRestart, err := parseBool(os.Getenv(EnableAutoRestartEnvName))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("invalid %s format: %s", EnableAutoRestartEnvName, os.Getenv(EnableAutoRestartEnvName)))
+	}
+	s.EnableAutoRestart = enableAutoRestart
+	killOldDelay = os.Getenv(KillOldDelayEnvName)
+	autoRestartInterval = os.Getenv(AutoRestartIntervalEnvName)
 
 	// parse args
 	var cmd []string
@@ -142,6 +159,20 @@ func ParseArgs(args []string) (*Starter, error) {
 	return s, nil
 }
 
+func parseBool(s string) (bool, error) {
+	if s == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(s)
+}
+
+func formatBool(b bool) string {
+	if b {
+		return "1"
+	}
+	return ""
+}
+
 func parseDuration(s string) (time.Duration, error) {
 	d, err := time.ParseDuration(s)
 	if err == nil {
@@ -163,4 +194,14 @@ func parseDuration(s string) (time.Duration, error) {
 		return d, nil
 	}
 	return 0, fmt.Errorf("invalid format: %q", s)
+}
+
+func formatDuration(d time.Duration) string {
+	sec, nsec := int64(d/time.Second), int64(d%time.Second)
+	if nsec == 0 {
+		return strconv.FormatInt(sec, 10)
+	}
+	s := fmt.Sprintf("%d.%09d", sec, nsec)
+	s = strings.TrimRight(s, "0")
+	return s
 }
