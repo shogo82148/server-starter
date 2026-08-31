@@ -778,7 +778,7 @@ RETRY:
 	s.logf("new worker is now running, sending %s to old workers: %s", signalToName(s.signalOnHUP()), pids)
 
 	if delay := s.killOldDelay(); delay > 0 {
-		s.logf("sleeping %f secs before killing old workers", delay.Seconds())
+		s.logf("sleeping %s secs before killing old workers", formatDuration(delay))
 		timer := time.NewTimer(delay)
 		select {
 		case <-timer.C:
