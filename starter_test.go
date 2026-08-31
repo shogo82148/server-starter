@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +39,9 @@ func Test_Start(t *testing.T) {
 			StatusFile:  statusFile,
 			SignalOnHUP: signal,
 		}
-		defer sd.Shutdown(context.Background())
+		t.Cleanup(func() {
+			sd.Close() //nolint:errcheck // ignore error on cleanup
+		})
 		go func() {
 			if err := sd.Run(); err != nil {
 				t.Errorf("sd.Run() failed: %s", err)
@@ -65,7 +68,9 @@ func Test_Start(t *testing.T) {
 			t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
 		}
 		pid1 := string(buf[:bytes.IndexByte(buf[:], ':')])
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			t.Fatalf("fail to close: %s", err)
+		}
 
 		time.Sleep(3 * time.Second)
 		status, err := os.ReadFile(statusFile)
@@ -80,7 +85,11 @@ func Test_Start(t *testing.T) {
 		// 0sec: start a new worker
 		// 1sec: if the new worker is still alive, send SIGTERM to the old one.
 		// 3sec: the old worker stops.
-		go sd.Reload()
+		go func() {
+			if err := sd.Reload(); err != nil {
+				t.Errorf("sd.Reload() failed: %s", err)
+			}
+		}()
 		time.Sleep(2 * time.Second)
 		status, err = os.ReadFile(statusFile)
 		if err != nil {
@@ -125,6 +134,10 @@ func Test_Start(t *testing.T) {
 		pid2 := string(buf[:bytes.IndexByte(buf[:], ':')])
 		if pid1 == pid2 {
 			t.Errorf("want another, got %s", pid2)
+		}
+
+		if err := sd.Shutdown(ctx); err != nil {
+			t.Errorf("sd.Shutdown() failed: %s", err)
 		}
 	}
 	t.Run("TERM", func(t *testing.T) {
@@ -214,7 +227,7 @@ func Test_KillOldDelay(t *testing.T) {
 	sd := &Starter{
 		Command:      binFile,
 		Ports:        []string{"0"},
-		KillOldDelay: 3 * time.Second,
+		KillOldDelay: new(3 * time.Second),
 		StatusFile:   statusFile,
 	}
 	defer sd.Shutdown(context.Background())
@@ -310,7 +323,7 @@ func Test_Unix(t *testing.T) {
 	sd := &Starter{
 		Command:      binFile,
 		Paths:        []string{sockFile},
-		KillOldDelay: 3 * time.Second,
+		KillOldDelay: new(3 * time.Second),
 		StatusFile:   statusFile,
 	}
 	defer sd.Close()
@@ -407,7 +420,7 @@ func Test_AutoRestart(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
 
-	// build echod
+	// build autorestart
 	binFile := filepath.Join(dir, "autorestart")
 	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "autorestart", "main.go"))
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -418,12 +431,12 @@ func Test_AutoRestart(t *testing.T) {
 	sd := &Starter{
 		Command:             binFile,
 		Ports:               []string{"0"},
-		KillOldDelay:        2 * time.Second,
+		KillOldDelay:        new(2 * time.Second),
 		StatusFile:          statusFile,
 		EnableAutoRestart:   true,
 		AutoRestartInterval: 6 * time.Second,
 	}
-	defer sd.Shutdown(context.Background())
+	defer sd.Close() //nolint:errcheck // ignore error on cleanup
 	go func() {
 		if err := sd.Run(); err != nil {
 			t.Errorf("sd.Run() failed: %s", err)
@@ -505,9 +518,13 @@ func Test_AutoRestart(t *testing.T) {
 	if pid1 == pid2 {
 		t.Errorf("want another, got %s", pid2)
 	}
+
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Errorf("sd.Shutdown() failed: %s", err)
+	}
 }
 
-func Test_EnvDir(t *testing.T) {
+func Test_Env(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
 
@@ -516,8 +533,100 @@ func Test_EnvDir(t *testing.T) {
 	if err := os.Mkdir(envdir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	os.Unsetenv("FOO")
-	envfile := filepath.Join(envdir, "FOO")
+
+	// build server
+	binFile := filepath.Join(dir, "env")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "env", "main.go"))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
+	}
+
+	sd := &Starter{
+		Command:           binFile,
+		Ports:             []string{"0"},
+		EnvDir:            envdir,
+		EnableAutoRestart: true,
+	}
+	defer sd.Close() //nolint:errcheck // ignore error on cleanup
+	go func() {
+		if err := sd.Run(); err != nil {
+			t.Errorf("sd.Run() failed: %s", err)
+		}
+	}()
+
+	time.Sleep(500 * time.Millisecond) // wait for starting worker
+
+	getEnv := func(ctx context.Context, key string) (string, error) {
+		// connect to the worker.
+		addr := sd.Listeners()[0].Addr().String()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/"+key, nil)
+		if err != nil {
+			return "", err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close() //nolint:errcheck // ignore error on cleanup
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", err
+		}
+		return string(body), nil
+	}
+
+	v, err := getEnv(ctx, EnvDirEnvName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != envdir {
+		t.Errorf("want %q, got %q", envdir, v)
+	}
+
+	v, err = getEnv(ctx, EnableAutoRestartEnvName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "1" {
+		t.Errorf("want 1, got %q", v)
+	}
+
+	v, err = getEnv(ctx, AutoRestartIntervalEnvName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "3600" {
+		t.Errorf("want 3600, got %q", v)
+	}
+
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Fatalf("sd.Shutdown() failed: %s", err)
+	}
+}
+
+func Test_EnvDir(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+
+	const envName = "FOO"
+	original, ok := os.LookupEnv(envName)
+	if ok {
+		t.Cleanup(func() {
+			if err := os.Setenv(envName, original); err != nil {
+				t.Fatalf("os.Setenv(%q) failed: %s", envName, err)
+			}
+		})
+	}
+	if err := os.Unsetenv(envName); err != nil {
+		t.Fatalf("os.Unsetenv(%q) failed: %s", envName, err)
+	}
+
+	// set up envdir
+	envdir := filepath.Join(dir, "envdir")
+	if err := os.Mkdir(envdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	envfile := filepath.Join(envdir, envName)
 	if err := os.WriteFile(envfile, []byte(" old env \nsecond line will be ignored.\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -543,23 +652,31 @@ func Test_EnvDir(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond) // wait for starting worker
 
-	getEnv := func() string {
+	getEnv := func(ctx context.Context, key string) (string, error) {
 		// connect to the worker.
 		addr := sd.Listeners()[0].Addr().String()
-		conn, err := net.Dial("tcp", addr)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/"+key, nil)
 		if err != nil {
-			t.Fatalf("fail to dial: %s", err)
+			return "", err
 		}
-		defer conn.Close()
-		if _, err := conn.Write([]byte("hello")); err != nil {
-			t.Fatalf("fail to write: %s", err)
-		}
-		var buf [1024 * 1024]byte
-		n, err := conn.Read(buf[:])
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			t.Fatalf("fail to read: %s", err)
+			return "", err
 		}
-		return string(buf[:n])
+		defer resp.Body.Close() //nolint:errcheck // ignore error on cleanup
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", err
+		}
+		return string(body), nil
+	}
+
+	v, err := getEnv(ctx, envName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != " old env " {
+		t.Errorf("want  old env , got %q", v)
 	}
 
 	// rewrite envdir...
@@ -568,18 +685,24 @@ func Test_EnvDir(t *testing.T) {
 	}
 
 	// ... but the worker returns the old environment value before reload.
-	v := getEnv()
-	if v != "FOO= old env " {
-		t.Errorf("want FOO= old env, got %s", v)
+	v, err = getEnv(ctx, envName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != " old env " {
+		t.Errorf("want  old env , got %q", v)
 	}
 
 	// after reload, we can get the new environment value
 	time.Sleep(1 * time.Second)
 	go sd.Reload()
 	time.Sleep(2 * time.Second)
-	v = getEnv()
-	if v != "FOO=new env" {
-		t.Errorf("want FOO=new env, got %s", v)
+	v, err = getEnv(ctx, envName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "new env" {
+		t.Errorf("want new env, got %q", v)
 	}
 
 	if err := os.Remove(envfile); err != nil {
@@ -587,9 +710,138 @@ func Test_EnvDir(t *testing.T) {
 	}
 	go sd.Reload()
 	time.Sleep(2 * time.Second)
-	v = getEnv()
+	v, err = getEnv(ctx, envName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if v != "not found!" {
-		t.Errorf("want not found!, got %s", v)
+		t.Errorf("want not found!, got %q", v)
+	}
+}
+
+func Test_OverrideAutoRestartByEnvDir(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+
+	// set up envdir
+	envdir := filepath.Join(dir, "envdir")
+	if err := os.Mkdir(envdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// override auto-restart settings by envdir
+	envfile := filepath.Join(envdir, EnableAutoRestartEnvName)
+	if err := os.WriteFile(envfile, []byte("1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	envfile = filepath.Join(envdir, KillOldDelayEnvName)
+	if err := os.WriteFile(envfile, []byte("3\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	envfile = filepath.Join(envdir, AutoRestartIntervalEnvName)
+	if err := os.WriteFile(envfile, []byte("6\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// build autorestart
+	binFile := filepath.Join(dir, "autorestart")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binFile, filepath.Join("testdata", "autorestart", "main.go"))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", dir, err, output)
+	}
+
+	statusFile := filepath.Join(dir, "status")
+	sd := &Starter{
+		Command:    binFile,
+		Ports:      []string{"0"},
+		StatusFile: statusFile,
+		EnvDir:     envdir,
+	}
+	defer sd.Close() //nolint:errcheck // ignore error on cleanup
+	go func() {
+		if err := sd.Run(); err != nil {
+			t.Errorf("sd.Run() failed: %s", err)
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond) // wait for starting worker
+
+	// connect to the first worker.
+	addr := sd.Listeners()[0].Addr().String()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("fail to dial: %s", err)
+	}
+	if _, err := conn.Write([]byte("hello")); err != nil {
+		t.Fatalf("fail to write: %s", err)
+	}
+	var buf [1024 * 1024]byte
+	n, err := conn.Read(buf[:])
+	if err != nil {
+		t.Fatalf("fail to read: %s", err)
+	}
+	if ok, _ := regexp.Match(`^\d+:hello$`, buf[:n]); !ok {
+		t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
+	}
+	pid1 := string(buf[:bytes.IndexByte(buf[:], ':')])
+	conn.Close()
+
+	// new worker spawn at 7sec (since start, interval(1sec) + auto_restart_interval(6sec))
+	// status updated at 8sec (7sec + interval(1sec))
+	// old dies at 11sec (8sec + kill_old_delay(2sec) + sleep(1sec) in the child source code
+
+	// check status before auto-restart
+	time.Sleep(6 * time.Second)
+	status, err := os.ReadFile(statusFile)
+	if err != nil {
+		t.Errorf("fail to read status file %s: %s", statusFile, err)
+	}
+	if ok, _ := regexp.Match(`^1:\d+\n$`, status); !ok {
+		t.Errorf(`want /1:\d+\n/, got %s`, status)
+	}
+
+	// status during transient state
+	time.Sleep(3 * time.Second)
+	status, err = os.ReadFile(statusFile)
+	if err != nil {
+		t.Errorf("fail to read status file %s: %s", statusFile, err)
+	}
+	if ok, _ := regexp.Match(`^1:\d+\n2:\d+\n$`, status); !ok {
+		t.Errorf(`want /1:\d+\n2:\d+\n/, got %s`, status)
+	}
+
+	// status after auto-restart
+	time.Sleep(3 * time.Second)
+	status, err = os.ReadFile(statusFile)
+	if err != nil {
+		t.Errorf("fail to read status file %s: %s", statusFile, err)
+	}
+	if ok, _ := regexp.Match(`^2:\d+\n$`, status); !ok {
+		t.Errorf(`want /2:\d+\n/, got %s`, status)
+	}
+
+	// connect to the second worker.
+	conn, err = net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("fail to dial: %s", err)
+	}
+	if _, err := conn.Write([]byte("hello")); err != nil {
+		t.Fatalf("fail to write: %s", err)
+	}
+	n, err = conn.Read(buf[:])
+	if err != nil {
+		t.Fatalf("fail to read: %s", err)
+	}
+	if ok, _ := regexp.Match(`^\d+:hello$`, buf[:n]); !ok {
+		t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
+	}
+	pid2 := string(buf[:bytes.IndexByte(buf[:], ':')])
+	if pid1 == pid2 {
+		t.Errorf("want another, got %s", pid2)
+	}
+
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Errorf("sd.Shutdown() failed: %s", err)
 	}
 }
 

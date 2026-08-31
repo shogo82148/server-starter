@@ -3,13 +3,31 @@ package main
 import (
 	"context"
 	"log"
-	"net"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/shogo82148/server-starter/listener"
 )
 
 func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/{key}", func(w http.ResponseWriter, r *http.Request) {
+		key := r.PathValue("key")
+		value, ok := os.LookupEnv(key)
+		if ok {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(value))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte("not found!"))
+		}
+	})
+	server := &http.Server{
+		Handler: mux,
+	}
+
 	ll, err := listener.Ports()
 	if err != nil {
 		log.Fatal(err)
@@ -18,21 +36,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for {
-		conn, err := l[0].Accept()
-		if err != nil {
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGTERM)
+		<-c
+		if err := server.Shutdown(context.Background()); err != nil {
 			log.Fatal(err)
 		}
-		go handle(conn)
+	}()
+	if err := server.Serve(l[0]); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
 	}
-}
-
-func handle(conn net.Conn) {
-	env, ok := os.LookupEnv("FOO")
-	if ok {
-		conn.Write([]byte("FOO=" + env))
-	} else {
-		conn.Write([]byte("not found!"))
-	}
-	conn.Close()
 }

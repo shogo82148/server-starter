@@ -13,7 +13,7 @@ const maxEnvValueBytes = 128 * 1024 // 128KiB
 
 func loadEnv(dir string) (map[string]string, error) {
 	if dir == "" {
-		return nil, nil
+		return map[string]string{}, nil
 	}
 
 	entries, err := os.ReadDir(dir)

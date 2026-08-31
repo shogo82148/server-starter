@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"maps"
 	"net"
 	"os"
@@ -56,7 +55,7 @@ type Starter struct {
 	SignalOnTERM os.Signal
 
 	// KillOldDelay is time to suspend to send a signal to the old worker.
-	KillOldDelay time.Duration
+	KillOldDelay *time.Duration
 
 	// if set, writes the status of the server process(es) to the file
 	StatusFile string
@@ -103,6 +102,10 @@ type Starter struct {
 	cancel     context.CancelFunc
 	pidFile    *os.File
 
+	muEnv     sync.RWMutex
+	parentEnv map[string]string // parentEnv is the environment variables of the parent process.
+	dirEnv    map[string]string // dirEnv is the environment variables from EnvDir.
+
 	// wait group for workers
 	wgWorker sync.WaitGroup
 
@@ -144,19 +147,36 @@ func (s *Starter) Run() error {
 		return errors.New("command is required")
 	}
 
+	// capture the parent environment variables
+	env := os.Environ()
+	parentEnv := make(map[string]string, len(env))
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			parentEnv[k] = v
+		}
+	}
+	parentEnv[EnvDirEnvName] = s.EnvDir
+	parentEnv[EnableAutoRestartEnvName] = formatBool(s.EnableAutoRestart)
+	if d := s.KillOldDelay; d != nil {
+		parentEnv[KillOldDelayEnvName] = formatDuration(*d)
+	}
+	parentEnv[AutoRestartIntervalEnvName] = formatDuration(s.AutoRestartInterval)
+	s.muEnv.Lock()
+	s.parentEnv = parentEnv
+	s.dirEnv = make(map[string]string)
+	s.muEnv.Unlock()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	s.cancel = cancel
-	defer s.Close()
+	defer s.Close() //nolint: errcheck // ignore error on cleanup
 
 	// block reload during start up
 	s.lockReload()
 
 	// start background goroutines
 	go s.waitSignal()
-	if s.EnableAutoRestart {
-		go s.autoRestarter()
-	}
+	go s.autoRestarter()
 
 	if err := s.openPidFile(); err != nil {
 		return err
@@ -198,7 +218,9 @@ func (s *Starter) openPidFile() error {
 	if err := flock(f.Fd(), syscall.LOCK_EX); err != nil {
 		return err
 	}
-	fmt.Fprintf(f, "%d\n", os.Getpid())
+	if _, err := fmt.Fprintf(f, "%d\n", os.Getpid()); err != nil {
+		return err
+	}
 	s.pidFile = f
 	return nil
 }
@@ -278,26 +300,31 @@ func (s *Starter) waitSignal() {
 }
 
 func (s *Starter) autoRestarter() {
-	interval := s.autoRestartInterval()
+	var interval time.Duration
 	var cnt int
 	var ticker *time.Ticker
 	var ch <-chan time.Time
 	for {
 		select {
 		case <-s.getChRestarter():
-			log.Println("reset")
-			cnt = 0
 			if ticker != nil {
 				ticker.Stop()
+				ticker = nil
+				ch = nil
 			}
-			ticker = time.NewTicker(interval)
-			ch = ticker.C
+
+			cnt = 0
+			interval = s.autoRestartInterval()
+			if interval > 0 {
+				ticker = time.NewTicker(interval)
+				ch = ticker.C
+			}
 		case <-ch:
 			cnt++
 			if cnt == 1 {
-				s.logf("autorestart triggered (interval=%s)", interval)
+				s.logf("autorestart triggered (interval=%s)", formatDuration(interval))
 			} else {
-				s.logf("autorestart triggered (forced, interval=%s)", interval)
+				s.logf("autorestart triggered (forced, interval=%s)", formatDuration(interval))
 			}
 			if s.tryToLockReload() {
 				go func() {
@@ -375,9 +402,7 @@ RETRY:
 	}
 
 	// notify that starting new worker succeed to the restarter.
-	if ch := s.getChRestarter(); ch != nil {
-		ch <- struct{}{}
-	}
+	s.getChRestarter() <- struct{}{}
 
 	return w, nil
 }
@@ -395,6 +420,11 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	defer func() {
 		<-ch
 	}()
+
+	if err := s.loadEnv(); err != nil {
+		return nil, fmt.Errorf("failed to load env dir: %w", err)
+	}
+
 	addr := func(sock socket) string {
 		if addr, ok := sock.(interface{ Addr() net.Addr }); ok {
 			return addr.Addr().String()
@@ -419,22 +449,15 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 		// index + 3, so we can just hard code it
 		ports[i] = fmt.Sprintf("%s=%d", addr(sock), i+3)
 	}
+	portsSpec := strings.Join(ports, ";")
 
 	generation := s.generation + 1
-	env, err := buildWorkerEnv(s.EnvDir, strings.Join(ports, ";"), generation)
-	if err != nil {
-		for _, f := range files {
-			f.Close() //nolint:errcheck // ignore error on cleanup
-		}
-		return nil, err
-	}
-
 	ctx, cancel := context.WithCancel(s.ctx)
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
 	cmd.Stdout = s.logger.Stdout()
 	cmd.Stderr = s.logger.Stderr()
 	cmd.ExtraFiles = files
-	cmd.Env = env
+	cmd.Env = s.buildWorkerEnv(portsSpec, generation)
 	cmd.Dir = s.Dir
 	w := &worker{
 		ctx:        ctx,
@@ -457,29 +480,38 @@ func (s *Starter) tryToStartWorker() (*worker, error) {
 	return w, nil
 }
 
-func buildWorkerEnv(envdir, portSpec string, generation int) ([]string, error) {
-	overlay, err := loadEnv(envdir)
-	if err != nil {
-		return nil, err
-	}
+// loadEnv loads the environment variables from EnvDir and stores them in dirEnv.
+func (s *Starter) loadEnv() error {
+	s.muEnv.Lock()
+	defer s.muEnv.Unlock()
 
-	env := os.Environ()
-	merged := make(map[string]string, len(env)+len(overlay))
-	for _, kv := range env {
-		if k, v, ok := strings.Cut(kv, "="); ok {
-			merged[k] = v
-		}
+	envDir, _ := s.getEnvLocked(EnvDirEnvName)
+	dirEnv, err := loadEnv(envDir)
+	if err != nil {
+		return err
 	}
-	maps.Copy(merged, overlay)
+	s.dirEnv = dirEnv
+	s.dirEnv[AutoRestartIntervalEnvName] = formatDuration(s.autoRestartIntervalLocked())
+	return nil
+}
+
+// buildWorkerEnv builds the environment variables for the worker process.
+func (s *Starter) buildWorkerEnv(portSpec string, generation int) []string {
+	s.muEnv.RLock()
+	defer s.muEnv.RUnlock()
+
+	merged := make(map[string]string, len(s.parentEnv)+len(s.dirEnv)+2)
+	maps.Copy(merged, s.parentEnv)
+	maps.Copy(merged, s.dirEnv)
 	merged[PortEnvName] = portSpec
 	merged[GenerationEnvName] = strconv.Itoa(generation)
 
-	result := make([]string, 0, len(merged))
+	env := make([]string, 0, len(merged))
 	for k, v := range merged {
-		result = append(result, k+"="+v)
+		env = append(env, k+"="+v)
 	}
-	slices.Sort(result)
-	return result, nil
+	slices.Sort(env)
+	return env
 }
 
 func (w *worker) Wait() {
@@ -746,8 +778,8 @@ RETRY:
 	s.logf("new worker is now running, sending %s to old workers: %s", signalToName(s.signalOnHUP()), pids)
 
 	if delay := s.killOldDelay(); delay > 0 {
-		s.logf("sleeping %d secs before killing old workers", int64(delay/time.Second))
-		timer := time.NewTimer(s.killOldDelay())
+		s.logf("sleeping %s secs before killing old workers", formatDuration(delay))
+		timer := time.NewTimer(delay)
 		select {
 		case <-timer.C:
 		case <-w.done:
@@ -809,15 +841,27 @@ func (s *Starter) getChStarter() chan struct{} {
 }
 
 func (s *Starter) getChRestarter() chan struct{} {
-	if !s.EnableAutoRestart {
-		return nil
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.chrestarter == nil {
-		s.chrestarter = make(chan struct{})
+		s.chrestarter = make(chan struct{}, 1)
 	}
 	return s.chrestarter
+}
+
+// getEnvLocked returns the value of the environment variable with the given key.
+// It first checks the environment variables from EnvDir, and if not found,
+// it checks the parent process's environment variables.
+//
+// The caller must hold the muEnv lock when calling this function.
+func (s *Starter) getEnvLocked(key string) (string, bool) {
+	if v, ok := s.dirEnv[key]; ok {
+		return v, true
+	}
+	if v, ok := s.parentEnv[key]; ok {
+		return v, true
+	}
+	return "", false
 }
 
 func (s *Starter) interval() time.Duration {
@@ -828,20 +872,56 @@ func (s *Starter) interval() time.Duration {
 }
 
 func (s *Starter) killOldDelay() time.Duration {
-	if s.KillOldDelay > 0 {
-		return s.KillOldDelay
+	s.muEnv.RLock()
+	defer s.muEnv.RUnlock()
+
+	if v, ok := s.getEnvLocked(KillOldDelayEnvName); ok {
+		if d, err := parseDuration(v); err == nil {
+			return d
+		} else {
+			s.logf("invalid %s format: %q: %v", KillOldDelayEnvName, v, err)
+		}
 	}
-	if s.EnableAutoRestart {
+
+	if s.autoRestartEnabledLocked() {
 		return 5 * time.Second
 	}
 	return 0
 }
 
-func (s *Starter) autoRestartInterval() time.Duration {
-	if s.AutoRestartInterval > 0 {
-		return s.AutoRestartInterval
+func (s *Starter) autoRestartEnabledLocked() bool {
+	if v, ok := s.getEnvLocked(EnableAutoRestartEnvName); ok {
+		if b, err := parseBool(v); err == nil {
+			return b
+		} else {
+			s.logf("invalid %s format: %q: %v", EnableAutoRestartEnvName, v, err)
+		}
 	}
-	return 360 * time.Second
+	return false
+}
+
+func (s *Starter) autoRestartInterval() time.Duration {
+	s.muEnv.RLock()
+	defer s.muEnv.RUnlock()
+	return s.autoRestartIntervalLocked()
+}
+
+func (s *Starter) autoRestartIntervalLocked() time.Duration {
+	if !s.autoRestartEnabledLocked() {
+		return 0
+	}
+
+	if v, ok := s.getEnvLocked(AutoRestartIntervalEnvName); ok {
+		if d, err := parseDuration(v); err == nil {
+			if d <= 0 {
+				return defaultAutoRestartInterval
+			}
+			return d
+		} else {
+			s.logf("invalid %s format: %q: %v", AutoRestartIntervalEnvName, v, err)
+		}
+	}
+	return defaultAutoRestartInterval
 }
 
 func (s *Starter) signalOnHUP() os.Signal {

@@ -175,3 +175,27 @@ func TestParseDuration(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatDuration(t *testing.T) {
+	testCases := []struct {
+		input    time.Duration
+		expected string
+	}{
+		{1 * time.Second, "1"},
+		{1500 * time.Millisecond, "1.5"},
+		{2 * time.Second, "2"},
+		{3 * time.Minute, "180"},
+		{4 * time.Hour, "14400"},
+		{12*time.Hour + 34*time.Minute, "45240"},
+		{9223372036*time.Second + 854775807*time.Nanosecond, "9223372036.854775807"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.expected, func(t *testing.T) {
+			s := formatDuration(tc.input)
+			if s != tc.expected {
+				t.Errorf("expected %q, got %q", tc.expected, s)
+			}
+		})
+	}
+}
