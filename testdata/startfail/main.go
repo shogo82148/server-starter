@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	"github.com/shogo82148/server-starter/listener"
@@ -15,10 +14,11 @@ import (
 func main() {
 	go watchSignal()
 
-	gen, err := strconv.Atoi(os.Getenv("SERVER_STARTER_GENERATION"))
-	if err != nil {
-		log.Fatal(err)
+	gen, ok := listener.Generation()
+	if !ok {
+		log.Fatal("SERVER_STARTER_GENERATION is not set")
 	}
+
 	if gen == 1 || (gen >= 3 && gen < 5) {
 		// emulate startup failure
 		os.Exit(1)
