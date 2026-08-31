@@ -3,6 +3,8 @@ package starter
 import (
 	"errors"
 	"fmt"
+	"math"
+	"math/bits"
 	"os"
 	"strconv"
 	"strings"
@@ -146,11 +148,32 @@ func ParseArgs(args []string) (*Starter, error) {
 func parseDuration(s string) (time.Duration, error) {
 	v, err := strconv.ParseFloat(s, 64)
 	if err == nil {
-		return time.Duration(v * float64(time.Second)), nil
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, fmt.Errorf("duration must be finite: %q", s)
+		}
+		if v < 0 {
+			return 0, fmt.Errorf("duration must be non-negative: %q", s)
+		}
+		i, f := math.Modf(v)
+		if i > math.MaxInt64 {
+			return 0, fmt.Errorf("duration too large: %q", s)
+		}
+		hi, lo := bits.Mul64(uint64(i), uint64(time.Second))
+		if hi != 0 || lo > math.MaxInt64 {
+			return 0, fmt.Errorf("duration too large: %q", s)
+		}
+		d := time.Duration(lo) + time.Duration(f*float64(time.Second))
+		if d < 0 {
+			return 0, fmt.Errorf("duration too large: %q", s)
+		}
+		return d, nil
 	}
 	d, err := time.ParseDuration(s)
 	if err == nil {
+		if d < 0 {
+			return 0, fmt.Errorf("duration must be non-negative: %q", s)
+		}
 		return d, nil
 	}
-	return 0, fmt.Errorf("invalid format: %s", s)
+	return 0, fmt.Errorf("invalid format: %q", s)
 }
