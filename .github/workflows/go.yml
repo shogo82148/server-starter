@@ -39,7 +39,7 @@ jobs:
           SERVER_STARTER_INTEROP_REQUIRED: 1
 
       - name: Send coverage
-        uses: shogo82148/actions-goveralls@8781f5dd05b691c4dd042d5e859c11c73e0104fa # v1.11.1
+        uses: shogo82148/actions-goveralls@77a1912dca42260ee3e97f61bd13ea7ef40baa93 # v1.11.2
         with:
           path-to-profile: profile.cov
           flag-name: Go-${{ matrix.go }}-${{ matrix.os }}
@@ -76,7 +76,7 @@ jobs:
         working-directory: listener
 
       - name: Send coverage
-        uses: shogo82148/actions-goveralls@8781f5dd05b691c4dd042d5e859c11c73e0104fa # v1.11.1
+        uses: shogo82148/actions-goveralls@77a1912dca42260ee3e97f61bd13ea7ef40baa93 # v1.11.2
         with:
           path-to-profile: listener/profile.cov
           flag-name: Go-listener-${{ matrix.go }}-${{ matrix.os }}
@@ -89,7 +89,7 @@ jobs:
       - listener
     runs-on: ubuntu-latest
     steps:
-      - uses: shogo82148/actions-goveralls@8781f5dd05b691c4dd042d5e859c11c73e0104fa # v1.11.1
+      - uses: shogo82148/actions-goveralls@77a1912dca42260ee3e97f61bd13ea7ef40baa93 # v1.11.2
         with:
           parallel-finished: true
 
