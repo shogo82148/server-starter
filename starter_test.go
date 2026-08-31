@@ -226,7 +226,7 @@ func Test_KillOldDelay(t *testing.T) {
 	sd := &Starter{
 		Command:      binFile,
 		Ports:        []string{"0"},
-		KillOldDelay: 3 * time.Second,
+		KillOldDelay: new(3 * time.Second),
 		StatusFile:   statusFile,
 	}
 	defer sd.Shutdown(context.Background())
@@ -322,7 +322,7 @@ func Test_Unix(t *testing.T) {
 	sd := &Starter{
 		Command:      binFile,
 		Paths:        []string{sockFile},
-		KillOldDelay: 3 * time.Second,
+		KillOldDelay: new(3 * time.Second),
 		StatusFile:   statusFile,
 	}
 	defer sd.Close()
@@ -430,7 +430,7 @@ func Test_AutoRestart(t *testing.T) {
 	sd := &Starter{
 		Command:             binFile,
 		Ports:               []string{"0"},
-		KillOldDelay:        2 * time.Second,
+		KillOldDelay:        new(2 * time.Second),
 		StatusFile:          statusFile,
 		EnableAutoRestart:   true,
 		AutoRestartInterval: 6 * time.Second,

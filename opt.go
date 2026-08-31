@@ -21,6 +21,9 @@ const KillOldDelayEnvName = "KILL_OLD_DELAY"
 // AutoRestartIntervalEnvName is the environment variable name for AutoRestartInterval.
 const AutoRestartIntervalEnvName = "AUTO_RESTART_INTERVAL"
 
+// defaultAutoRestartInterval is the default interval for auto-restart when EnableAutoRestart is set to true.
+const defaultAutoRestartInterval = time.Hour
+
 type errorList []error
 
 func (l errorList) Error() string {
@@ -142,9 +145,11 @@ func ParseArgs(args []string) (*Starter, error) {
 	}
 
 	if killOldDelay != "" {
-		s.KillOldDelay, err = parseDuration(killOldDelay)
+		d, err := parseDuration(killOldDelay)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("invalid --kill-old-delay format: %s", killOldDelay))
+		} else {
+			s.KillOldDelay = &d
 		}
 	}
 	if autoRestartInterval != "" {
