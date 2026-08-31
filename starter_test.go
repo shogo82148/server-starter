@@ -608,10 +608,14 @@ func Test_EnvDir(t *testing.T) {
 	original, ok := os.LookupEnv(envName)
 	if ok {
 		t.Cleanup(func() {
-			os.Setenv(envName, original)
+			if err := os.Setenv(envName, original); err != nil {
+				t.Fatalf("os.Setenv(%q) failed: %s", envName, err)
+			}
 		})
 	}
-	os.Unsetenv(envName)
+	if err := os.Unsetenv(envName); err != nil {
+		t.Fatalf("os.Unsetenv(%q) failed: %s", envName, err)
+	}
 
 	// set up envdir
 	envdir := filepath.Join(dir, "envdir")
