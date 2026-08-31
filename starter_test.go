@@ -659,7 +659,7 @@ func Test_EnvDir(t *testing.T) {
 		if err != nil {
 			return "", err
 		}
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck // ignore error on cleanup
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return "", err
