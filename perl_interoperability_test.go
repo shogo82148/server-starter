@@ -1,6 +1,7 @@
 package starter
 
 import (
+	"bufio"
 	"io"
 	"net"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -115,6 +117,62 @@ func TestPerlInteroperabilityGoSupervisorRunsPerlWorker(t *testing.T) {
 	}
 
 	// shutdown the worker.
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown() returned error: %v", err)
+	}
+}
+
+func TestPerlInteroperabilityGoSupervisorRunsPerlWorkerUDP(t *testing.T) {
+	original := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() {
+		r.Close() //nolint:errcheck // ignore error on cleanup
+		w.Close() //nolint:errcheck // ignore error on cleanup
+		os.Stdout = original
+	})
+
+	ctx := t.Context()
+	perl, _ := requirePerlServerStarter(t)
+
+	// start the perl worker with the go supervisor.
+	sd := &Starter{
+		Command: perl,
+		Args:    []string{filepath.Join("testdata", "15-udp-server.pl")},
+		Ports:   []string{"u0"},
+	}
+	t.Cleanup(func() { sd.Close() }) //nolint:errcheck // ignore error on cleanup
+	go func() {
+		if err := sd.Run(); err != nil {
+			t.Errorf("Run() returned error: %v", err)
+		}
+	}()
+
+	// wait for starting worker
+	success := make(chan struct{})
+	go func() {
+		scanner := bufio.NewScanner(r)
+		// wait for starting worker
+		for scanner.Scan() {
+			text := scanner.Text()
+			if strings.HasPrefix(text, "success") {
+				break
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			t.Errorf("failed to read from pipe: %v", err)
+		}
+		close(success)
+	}()
+	select {
+	case <-success:
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for worker to start")
+	}
+
 	if err := sd.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown() returned error: %v", err)
 	}

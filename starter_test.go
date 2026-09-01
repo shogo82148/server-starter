@@ -995,6 +995,52 @@ func Test_LoggerDies(t *testing.T) {
 	}
 }
 
+func Test_UDP(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+
+	// build the server
+	serverBinFile := filepath.Join(dir, "server")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", serverBinFile, filepath.Join("testdata", "udp", "main.go"))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/udp/main.go", err, output)
+	}
+
+	sd := &Starter{
+		Command: serverBinFile,
+		Ports:   []string{"u0"},
+	}
+	defer sd.Close() //nolint:errcheck // ignore error on cleanup
+	go func() {
+		if err := sd.Run(); err != nil {
+			t.Errorf("sd.Run() failed: %s", err)
+		}
+	}()
+
+	time.Sleep(500 * time.Millisecond) // wait for starting worker
+
+	// connect to the first worker.
+	addr := sd.PacketConns()[0].LocalAddr().String()
+	conn, err := net.Dial("udp", addr)
+	if err != nil {
+		t.Fatalf("fail to dial: %s", err)
+	}
+	if _, err := conn.Write([]byte("hello")); err != nil {
+		t.Fatalf("fail to write: %s", err)
+	}
+	var buf [1024 * 1024]byte
+	n, err := conn.Read(buf[:])
+	if err != nil {
+		t.Fatalf("fail to read: %s", err)
+	}
+	if string(buf[:n]) != "HELLO" {
+		t.Errorf("want HELLO, got %s", buf[:n])
+	}
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Errorf("sd.Shutdown() failed: %s", err)
+	}
+}
+
 func Test_RestartAndStop(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
