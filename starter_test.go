@@ -959,12 +959,38 @@ func Test_LoggerDies(t *testing.T) {
 		t.Fatalf("Failed to compile %s: %s\n%s", "testdata/logger/sleep/main.go", err, output)
 	}
 
+	loggerPIDs := filepath.Join(dir, "logger-pids")
 	sd := &Starter{
 		Command: serverBinFile,
 		Ports:   []string{"0"},
-		LogFile: "|" + loggerBinFile,
+		LogFile: "|" + loggerBinFile + " " + loggerPIDs,
 	}
-	if err := sd.Run(); err != nil {
+	done := make(chan error, 1)
+	go func() {
+		done <- sd.Run()
+	}()
+	// The test logger exits after five seconds. The starter must remain alive
+	// while the command logger is restarted behind the existing output pipe.
+	time.Sleep(6 * time.Second)
+	select {
+	case err := <-done:
+		t.Fatalf("sd.Run() returned after the logger died: %v", err)
+	default:
+	}
+	pids, err := os.ReadFile(loggerPIDs)
+	if err != nil {
+		t.Fatalf("failed to read logger process IDs: %s", err)
+	}
+	if lines := bytes.Fields(pids); len(lines) < 2 || bytes.Equal(lines[0], lines[1]) {
+		t.Fatalf("logger was not restarted; recorded process IDs: %q", pids)
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := sd.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("sd.Shutdown() failed: %s", err)
+	}
+	if err := <-done; err != nil {
 		t.Errorf("sd.Run() failed: %s", err)
 	}
 }
