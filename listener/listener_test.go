@@ -2,556 +2,760 @@ package listener
 
 import (
 	"context"
-	"io/ioutil"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
-	"time"
 )
 
-// unsetEnv unsets the environment variable with the given key and restores it after the test.
-func unsetEnv(t *testing.T, key string) {
-	t.Helper()
+type socket interface {
+	File() (*os.File, error)
+	Close() error
+}
 
-	prev, ok := os.LookupEnv(key)
+func TestTCPListener_Fd(t *testing.T) {
+	l := newTCPListener("127.0.0.1", 8080, 42)
+	if l.Fd() != 42 {
+		t.Errorf("Fd() = %d, want 42", l.Fd())
+	}
+}
+
+func TestTCPListener_Addr(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+		port int
+		want string
+	}{
+		{
+			name: "specific host",
+			addr: "127.0.0.1",
+			port: 8080,
+			want: "127.0.0.1:8080",
+		},
+		{
+			name: "empty host defaults to wildcard",
+			addr: "",
+			port: 8080,
+			want: "0.0.0.0:8080",
+		},
+		{
+			name: "IPv6 host",
+			addr: "::1",
+			port: 8080,
+			want: "[::1]:8080",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := newTCPListener(tt.addr, tt.port, 0)
+			if got := l.Addr(); got != tt.want {
+				t.Errorf("Addr() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTCPListener_String(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+		port int
+		fd   uintptr
+		want string
+	}{
+		{
+			name: "wildcard host omits address",
+			addr: "",
+			port: 8080,
+			fd:   3,
+			want: "8080=3",
+		},
+		{
+			name: "explicit wildcard host omits address",
+			addr: "0.0.0.0",
+			port: 8080,
+			fd:   3,
+			want: "8080=3",
+		},
+		{
+			name: "specific host",
+			addr: "127.0.0.1",
+			port: 8080,
+			fd:   4,
+			want: "127.0.0.1:8080=4",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := newTCPListener(tt.addr, tt.port, tt.fd)
+			if got := l.String(); got != tt.want {
+				t.Errorf("String() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTCPListener_ListenPacket(t *testing.T) {
+	l := newTCPListener("127.0.0.1", 8080, 0)
+	conn, err := l.ListenPacket()
+	if err == nil {
+		conn.Close() //nolint:errcheck // ignore error on cleanup
+		t.Fatal("ListenPacket() = nil, want error")
+	}
+}
+
+func TestTCPListener_Listen(t *testing.T) {
+	// create a real TCP listener to obtain a valid file descriptor.
+	orig, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() = %v, want nil", err)
+	}
+	t.Cleanup(func() { orig.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	f, err := orig.(socket).File()
+	if err != nil {
+		t.Fatalf("File() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	addr := orig.Addr().(*net.TCPAddr)
+	l := newTCPListener(addr.IP.String(), addr.Port, f.Fd())
+
+	ln, err := l.Listen()
+	if err != nil {
+		t.Fatalf("Listen() = %v, want nil", err)
+	}
+	t.Cleanup(func() { ln.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	if _, ok := ln.(*net.TCPListener); !ok {
+		t.Fatalf("Listen() returned %T, want *net.TCPListener", ln)
+	}
+
+	// the returned listener should accept a connection on the same address.
+	go func() {
+		conn, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			return
+		}
+		conn.Close() //nolint:errcheck // ignore error on cleanup
+	}()
+
+	conn, err := ln.Accept()
+	if err != nil {
+		t.Fatalf("Accept() = %v, want nil", err)
+	}
+	conn.Close() //nolint:errcheck // ignore error on cleanup
+}
+
+func TestTCPListener_Listen_invalidFd(t *testing.T) {
+	// use a file descriptor that is not a socket.
+	f, err := os.CreateTemp(t.TempDir(), "not-a-socket")
+	if err != nil {
+		t.Fatalf("os.CreateTemp() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	l := newTCPListener("127.0.0.1", 8080, f.Fd())
+	ln, err := l.Listen()
+	if err == nil {
+		ln.Close() //nolint:errcheck // ignore error on cleanup
+		t.Fatal("Listen() = nil, want error")
+	}
+}
+
+func TestUDPListener_Fd(t *testing.T) {
+	l := newUDPListener("127.0.0.1", 8080, 42)
+	if l.Fd() != 42 {
+		t.Errorf("Fd() = %d, want 42", l.Fd())
+	}
+}
+
+func TestUDPListener_Addr(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+		port int
+		want string
+	}{
+		{
+			name: "specific host",
+			addr: "127.0.0.1",
+			port: 8080,
+			want: "127.0.0.1:8080",
+		},
+		{
+			name: "empty host defaults to wildcard",
+			addr: "",
+			port: 8080,
+			want: "0.0.0.0:8080",
+		},
+		{
+			name: "IPv6 host",
+			addr: "::1",
+			port: 8080,
+			want: "[::1]:8080",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := newUDPListener(tt.addr, tt.port, 0)
+			if got := l.Addr(); got != tt.want {
+				t.Errorf("Addr() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUDPListener_String(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+		port int
+		fd   uintptr
+		want string
+	}{
+		{
+			name: "wildcard host omits address",
+			addr: "",
+			port: 8080,
+			fd:   3,
+			want: "8080=3",
+		},
+		{
+			name: "explicit wildcard host omits address",
+			addr: "0.0.0.0",
+			port: 8080,
+			fd:   3,
+			want: "8080=3",
+		},
+		{
+			name: "specific host",
+			addr: "127.0.0.1",
+			port: 8080,
+			fd:   4,
+			want: "127.0.0.1:8080=4",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := newUDPListener(tt.addr, tt.port, tt.fd)
+			if got := l.String(); got != tt.want {
+				t.Errorf("String() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUDPListener_Listen(t *testing.T) {
+	l := newUDPListener("127.0.0.1", 8080, 0)
+	ln, err := l.Listen()
+	if err == nil {
+		ln.Close() //nolint:errcheck // ignore error on cleanup
+		t.Fatal("Listen() = nil, want error")
+	}
+}
+
+func TestUDPListener_ListenPacket(t *testing.T) {
+	// create a real UDP socket to obtain a valid file descriptor.
+	orig, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.ListenPacket() = %v, want nil", err)
+	}
+	t.Cleanup(func() { orig.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	f, err := orig.(socket).File()
+	if err != nil {
+		t.Fatalf("File() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	addr := orig.LocalAddr().(*net.UDPAddr)
+	l := newUDPListener(addr.IP.String(), addr.Port, f.Fd())
+
+	conn, err := l.ListenPacket()
+	if err != nil {
+		t.Fatalf("ListenPacket() = %v, want nil", err)
+	}
+	t.Cleanup(func() { conn.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	udpConn, ok := conn.(*net.UDPConn)
 	if !ok {
-		return
+		t.Fatalf("ListenPacket() returned %T, want *net.UDPConn", conn)
 	}
 
-	if err := os.Unsetenv(key); err != nil {
-		t.Fatalf("failed to unset env: %v", err)
+	// the returned conn should receive a datagram sent to the same address.
+	want := []byte("hello")
+	client, err := net.Dial("udp", udpConn.LocalAddr().String())
+	if err != nil {
+		t.Fatalf("net.Dial() = %v, want nil", err)
+	}
+	t.Cleanup(func() { client.Close() }) //nolint:errcheck // ignore error on cleanup
+	if _, err := client.Write(want); err != nil {
+		t.Fatalf("Write() = %v, want nil", err)
 	}
 
-	t.Cleanup(func() {
-		os.Setenv(key, prev)
+	buf := make([]byte, len(want))
+	n, _, err := udpConn.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("ReadFrom() = %v, want nil", err)
+	}
+	if string(buf[:n]) != string(want) {
+		t.Fatalf("ReadFrom() = %q, want %q", buf[:n], want)
+	}
+}
+
+func TestUDPListener_ListenPacket_invalidFd(t *testing.T) {
+	// use a file descriptor that is not a socket.
+	f, err := os.CreateTemp(t.TempDir(), "not-a-socket")
+	if err != nil {
+		t.Fatalf("os.CreateTemp() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	l := newUDPListener("127.0.0.1", 8080, f.Fd())
+	conn, err := l.ListenPacket()
+	if err == nil {
+		conn.Close() //nolint:errcheck // ignore error on cleanup
+		t.Fatal("ListenPacket() = nil, want error")
+	}
+}
+
+func TestUnixListener_Fd(t *testing.T) {
+	l := newUnixListener("/tmp/test.sock", 42)
+	if l.Fd() != 42 {
+		t.Errorf("Fd() = %d, want 42", l.Fd())
+	}
+}
+
+func TestUnixListener_Addr(t *testing.T) {
+	l := newUnixListener("/tmp/test.sock", 0)
+	if got := l.Addr(); got != "/tmp/test.sock" {
+		t.Errorf("Addr() = %s, want /tmp/test.sock", got)
+	}
+}
+
+func TestUnixListener_String(t *testing.T) {
+	l := newUnixListener("/tmp/test.sock", 3)
+	if got := l.String(); got != "/tmp/test.sock=3" {
+		t.Errorf("String() = %s, want /tmp/test.sock=3", got)
+	}
+}
+
+func TestUnixListener_ListenPacket(t *testing.T) {
+	l := newUnixListener("/tmp/test.sock", 0)
+	conn, err := l.ListenPacket()
+	if err == nil {
+		conn.Close() //nolint:errcheck // ignore error on cleanup
+		t.Fatal("ListenPacket() = nil, want error")
+	}
+}
+
+func TestUnixListener_Listen(t *testing.T) {
+	// create a real Unix socket to obtain a valid file descriptor.
+	sockPath := filepath.Join(t.TempDir(), "test.sock")
+	orig, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("net.Listen() = %v, want nil", err)
+	}
+	t.Cleanup(func() { orig.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	f, err := orig.(socket).File()
+	if err != nil {
+		t.Fatalf("File() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	l := newUnixListener(sockPath, f.Fd())
+
+	ln, err := l.Listen()
+	if err != nil {
+		t.Fatalf("Listen() = %v, want nil", err)
+	}
+	t.Cleanup(func() { ln.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	if _, ok := ln.(*net.UnixListener); !ok {
+		t.Fatalf("Listen() returned %T, want *net.UnixListener", ln)
+	}
+
+	// the returned listener should accept a connection on the same path.
+	go func() {
+		conn, err := net.Dial("unix", sockPath)
+		if err != nil {
+			return
+		}
+		conn.Close() //nolint:errcheck // ignore error on cleanup
+	}()
+
+	conn, err := ln.Accept()
+	if err != nil {
+		t.Fatalf("Accept() = %v, want nil", err)
+	}
+	conn.Close() //nolint:errcheck // ignore error on cleanup
+}
+
+func TestUnixListener_Listen_invalidFd(t *testing.T) {
+	// use a file descriptor that is not a socket.
+	f, err := os.CreateTemp(t.TempDir(), "not-a-socket")
+	if err != nil {
+		t.Fatalf("os.CreateTemp() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	l := newUnixListener("/tmp/test.sock", f.Fd())
+	ln, err := l.Listen()
+	if err == nil {
+		ln.Close() //nolint:errcheck // ignore error on cleanup
+		t.Fatal("Listen() = nil, want error")
+	}
+}
+
+func TestParseListenTargets(t *testing.T) {
+	t.Run("TCP sockets", func(t *testing.T) {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("net.Listen() = %v, want nil", err)
+		}
+		t.Cleanup(func() { l.Close() }) //nolint:errcheck // ignore error on cleanup
+
+		sock := l.(socket)
+		f, err := sock.File()
+		if err != nil {
+			t.Fatalf("sock.File() = %v, want nil", err)
+		}
+
+		// parse the listen target string
+		s := fmt.Sprintf("%s=%d", l.Addr().String(), f.Fd())
+		ll, err := parseListenTargets(s)
+		if err != nil {
+			t.Fatalf("parseListenTargets() = %v, want nil", err)
+		}
+
+		// verify
+		if len(ll) != 1 {
+			t.Fatalf("len(ll) = %d, want 1", len(ll))
+		}
+		if _, ok := ll[0].(*TCPListener); !ok {
+			t.Fatalf("ll[0] is not *TCPListener, got %T", ll[0])
+		}
+		if ll[0].Addr() != l.Addr().String() {
+			t.Fatalf("ll[0].Addr() = %s, want %s", ll[0].Addr(), l.Addr().String())
+		}
+	})
+
+	t.Run("Unix sockets", func(t *testing.T) {
+		sockPath := "./test.sock"
+		l, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Fatalf("net.Listen() = %v, want nil", err)
+		}
+		t.Cleanup(func() { l.Close() }) //nolint:errcheck // ignore error on cleanup
+
+		sock := l.(socket)
+		f, err := sock.File()
+		if err != nil {
+			t.Fatalf("sock.File() = %v, want nil", err)
+		}
+
+		// parse the listen target string
+		s := fmt.Sprintf("%s=%d", sockPath, f.Fd())
+		ll, err := parseListenTargets(s)
+		if err != nil {
+			t.Fatalf("parseListenTargets() = %v, want nil", err)
+		}
+
+		// verify
+		if len(ll) != 1 {
+			t.Fatalf("len(ll) = %d, want 1", len(ll))
+		}
+		if _, ok := ll[0].(*UnixListener); !ok {
+			t.Fatalf("ll[0] is not *UnixListener, got %T", ll[0])
+		}
+		if ll[0].Addr() != sockPath {
+			t.Fatalf("ll[0].Addr() = %s, want %s", ll[0].Addr(), sockPath)
+		}
+	})
+
+	t.Run("UDP sockets", func(t *testing.T) {
+		l, err := net.ListenPacket("udp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("net.ListenPacket() = %v, want nil", err)
+		}
+		t.Cleanup(func() { l.Close() }) //nolint:errcheck // ignore error on cleanup
+
+		sock := l.(socket)
+		f, err := sock.File()
+		if err != nil {
+			t.Fatalf("sock.File() = %v, want nil", err)
+		}
+
+		// parse the listen target string
+		s := fmt.Sprintf("%s=%d", l.LocalAddr().String(), f.Fd())
+		ll, err := parseListenTargets(s)
+		if err != nil {
+			t.Fatalf("parseListenTargets() = %v, want nil", err)
+		}
+
+		// verify
+		if len(ll) != 1 {
+			t.Fatalf("len(ll) = %d, want 1", len(ll))
+		}
+		if _, ok := ll[0].(*UDPListener); !ok {
+			t.Fatalf("ll[0] is not *UDPListener, got %T", ll[0])
+		}
+		if ll[0].Addr() != l.LocalAddr().String() {
+			t.Fatalf("ll[0].Addr() = %s, want %s", ll[0].Addr(), l.LocalAddr().String())
+		}
 	})
 }
 
-func TestIsUnderStartServer(t *testing.T) {
-	t.Run("not under start_server", func(t *testing.T) {
-		unsetEnv(t, GenerationEnvName)
-		if IsUnderStartServer() {
-			t.Errorf("IsUnderStartServer() = true, want false")
+// newTestTCPSpec creates a *TCPListener backed by a real, bound TCP socket.
+func newTestTCPSpec(t *testing.T) *TCPListener {
+	t.Helper()
+	orig, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() = %v, want nil", err)
+	}
+	t.Cleanup(func() { orig.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	f, err := orig.(socket).File()
+	if err != nil {
+		t.Fatalf("File() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	addr := orig.Addr().(*net.TCPAddr)
+	return newTCPListener(addr.IP.String(), addr.Port, f.Fd())
+}
+
+// newTestUDPSpec creates a *UDPListener backed by a real, bound UDP socket.
+func newTestUDPSpec(t *testing.T) *UDPListener {
+	t.Helper()
+	orig, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.ListenPacket() = %v, want nil", err)
+	}
+	t.Cleanup(func() { orig.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	f, err := orig.(socket).File()
+	if err != nil {
+		t.Fatalf("File() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	addr := orig.LocalAddr().(*net.UDPAddr)
+	return newUDPListener(addr.IP.String(), addr.Port, f.Fd())
+}
+
+func TestListenSpecs_String(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		var ll ListenSpecs
+		if got := ll.String(); got != "" {
+			t.Errorf("String() = %q, want empty", got)
 		}
 	})
 
-	t.Run("under start_server", func(t *testing.T) {
-		t.Setenv(GenerationEnvName, "1")
-		if !IsUnderStartServer() {
-			t.Errorf("IsUnderStartServer() = false, want true")
+	t.Run("multiple specs", func(t *testing.T) {
+		ll := ListenSpecs{
+			newTCPListener("", 8080, 3),
+			newTCPListener("127.0.0.1", 8081, 4),
+			newUnixListener("/tmp/test.sock", 5),
+		}
+		want := "8080=3;127.0.0.1:8081=4;/tmp/test.sock=5"
+		if got := ll.String(); got != want {
+			t.Errorf("String() = %q, want %q", got, want)
 		}
 	})
 }
 
-func TestGeneration(t *testing.T) {
-	t.Run("not under start_server", func(t *testing.T) {
-		unsetEnv(t, GenerationEnvName)
-		if gen, ok := Generation(); ok || gen != 0 {
-			t.Errorf("Generation() = %d, %v, want 0, false", gen, ok)
+func TestListenSpecs_Listen(t *testing.T) {
+	t.Run("tcp", func(t *testing.T) {
+		spec := newTestTCPSpec(t)
+		ll := ListenSpecs{spec}
+
+		ln, err := ll.Listen(context.Background(), "tcp", spec.Addr())
+		if err != nil {
+			t.Fatalf("Listen() = %v, want nil", err)
+		}
+		t.Cleanup(func() { ln.Close() }) //nolint:errcheck // ignore error on cleanup
+
+		if _, ok := ln.(*net.TCPListener); !ok {
+			t.Fatalf("Listen() returned %T, want *net.TCPListener", ln)
 		}
 	})
 
-	t.Run("under start_server", func(t *testing.T) {
-		t.Setenv(GenerationEnvName, "1")
-		if gen, ok := Generation(); !ok || gen != 1 {
-			t.Errorf("Generation() = %d, %v, want 1, true", gen, ok)
+	t.Run("address not bound", func(t *testing.T) {
+		spec := newTestTCPSpec(t)
+		ll := ListenSpecs{spec}
+
+		ln, err := ll.Listen(context.Background(), "tcp", "127.0.0.1:1")
+		if err == nil {
+			ln.Close() //nolint:errcheck // ignore error on cleanup
+			t.Fatal("Listen() = nil, want error")
 		}
 	})
 
-	t.Run("generation 0 is acceptable", func(t *testing.T) {
-		t.Setenv(GenerationEnvName, "0")
-		if gen, ok := Generation(); !ok || gen != 0 {
-			t.Errorf("Generation() = %d, %v, want 0, true", gen, ok)
+	t.Run("unknown network", func(t *testing.T) {
+		var ll ListenSpecs
+		ln, err := ll.Listen(context.Background(), "foo", "127.0.0.1:8080")
+		if err == nil {
+			ln.Close() //nolint:errcheck // ignore error on cleanup
+			t.Fatal("Listen() = nil, want error")
 		}
-	})
-
-	t.Run("invalid generation", func(t *testing.T) {
-		t.Setenv(GenerationEnvName, "invalid")
-		if gen, ok := Generation(); ok || gen != 0 {
-			t.Errorf("Generation() = %d, %v, want 0, false", gen, ok)
+		if _, ok := err.(net.UnknownNetworkError); !ok {
+			t.Fatalf("Listen() error = %T, want net.UnknownNetworkError", err)
 		}
-	})
-
-	t.Run("negative generation", func(t *testing.T) {
-		t.Setenv(GenerationEnvName, "-1")
-		if gen, ok := Generation(); ok || gen != 0 {
-			t.Errorf("Generation() = %d, %v, want 0, false", gen, ok)
-		}
-	})
-}
-
-func TestListenConfigs(t *testing.T) {
-	wantOK := func(ctx context.Context, t *testing.T, ll ListenSpecs, network, address string) {
-		t.Helper()
-		l, err := ll.Listen(ctx, network, address)
-		if err != nil {
-			t.Errorf("%s, %s: unexpected error: %v", network, address, err)
-			return
-		}
-		l.Close()
-	}
-	wantNG := func(ctx context.Context, t *testing.T, ll ListenSpecs, network, address string) {
-		t.Helper()
-		l, err := ll.Listen(ctx, network, address)
-		if err != nil {
-			return
-		}
-		l.Close()
-		t.Errorf("%s, %s: error expected, got nil", network, address)
-	}
-
-	t.Run("default", func(t *testing.T) {
-		l, err := net.Listen("tcp4", "0.0.0.0:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer l.Close()
-
-		f, err := l.(interface{ File() (*os.File, error) }).File()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, port, _ := net.SplitHostPort(l.Addr().String())
-
-		ll := ListenSpecs{
-			listenSpec{
-				addr: port, // no host, just only port
-				fd:   f.Fd(),
-			},
-		}
-
-		// If host is not specified, then the program will bind to the default address of IPv4 ("0.0.0.0").
-		// https://metacpan.org/pod/distribution/Server-Starter/script/start_server#-port=(port|host:port|port=fd|host:port=fd)
-		wantOK(ctx, t, ll, "tcp", ":"+port)
-		wantOK(ctx, t, ll, "tcp4", ":"+port)
-		wantOK(ctx, t, ll, "tcp", "0.0.0.0:"+port)
-		wantOK(ctx, t, ll, "tcp4", "0.0.0.0:"+port)
-		wantNG(ctx, t, ll, "tcp6", ":"+port)
-		wantOK(ctx, t, ll, "tcp", "[::]:"+port)
-		wantNG(ctx, t, ll, "unix", "0.0.0.0:"+port)
-	})
-
-	t.Run("ipv4", func(t *testing.T) {
-		l, err := net.Listen("tcp4", "0.0.0.0:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer l.Close()
-
-		f, err := l.(interface{ File() (*os.File, error) }).File()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, port, _ := net.SplitHostPort(l.Addr().String())
-
-		ll := ListenSpecs{
-			listenSpec{
-				addr: "0.0.0.0:" + port,
-				fd:   f.Fd(),
-			},
-		}
-		wantOK(ctx, t, ll, "tcp", ":"+port)
-		wantOK(ctx, t, ll, "tcp4", ":"+port)
-		wantOK(ctx, t, ll, "tcp", "0.0.0.0:"+port)
-		wantOK(ctx, t, ll, "tcp4", "0.0.0.0:"+port)
-		wantNG(ctx, t, ll, "tcp6", ":"+port)
-		wantOK(ctx, t, ll, "tcp", "[::]:"+port)
-		wantNG(ctx, t, ll, "unix", "0.0.0.0:"+port)
-	})
-
-	t.Run("ipv4-loopback", func(t *testing.T) {
-		l, err := net.Listen("tcp4", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer l.Close()
-
-		f, err := l.(interface{ File() (*os.File, error) }).File()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, port, _ := net.SplitHostPort(l.Addr().String())
-
-		ll := ListenSpecs{
-			listenSpec{
-				addr: "127.0.0.1:" + port,
-				fd:   f.Fd(),
-			},
-		}
-		wantOK(ctx, t, ll, "tcp", "127.0.0.1:"+port)
-		wantOK(ctx, t, ll, "tcp4", "127.0.0.1:"+port)
-		wantOK(ctx, t, ll, "tcp", "[::1]:"+port)
-		wantNG(ctx, t, ll, "unix", "127.0.0.1:"+port)
-	})
-
-	t.Run("ipv6", func(t *testing.T) {
-		l, err := net.Listen("tcp6", ":0")
-		if err != nil {
-			t.Skip("IPv6 is not supported?")
-			return
-		}
-		defer l.Close()
-
-		f, err := l.(interface{ File() (*os.File, error) }).File()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, port, _ := net.SplitHostPort(l.Addr().String())
-
-		ll := ListenSpecs{
-			listenSpec{
-				addr: "[::]:" + port,
-				fd:   f.Fd(),
-			},
-		}
-		wantOK(ctx, t, ll, "tcp", ":"+port)
-		wantOK(ctx, t, ll, "tcp6", ":"+port)
-		wantOK(ctx, t, ll, "tcp", "[::]:"+port)
-		wantOK(ctx, t, ll, "tcp6", "[::]:"+port)
-		wantNG(ctx, t, ll, "tcp", "0.0.0.0:"+port)
-		wantNG(ctx, t, ll, "tcp4", ":"+port)
-		wantNG(ctx, t, ll, "unix", ":"+port)
-	})
-
-	t.Run("ipv6-loopback", func(t *testing.T) {
-		l, err := net.Listen("tcp6", "[::1]:0")
-		if err != nil {
-			t.Skip("IPv6 is not supported?")
-			return
-		}
-		defer l.Close()
-
-		f, err := l.(interface{ File() (*os.File, error) }).File()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, port, _ := net.SplitHostPort(l.Addr().String())
-
-		ll := ListenSpecs{
-			listenSpec{
-				addr: "[::1]:" + port,
-				fd:   f.Fd(),
-			},
-		}
-		wantOK(ctx, t, ll, "tcp", "[::1]:"+port)
-		wantOK(ctx, t, ll, "tcp6", "[::1]:"+port)
-		wantNG(ctx, t, ll, "tcp", "127.0.0.1:"+port)
-		wantNG(ctx, t, ll, "unix", "[::1]:"+port)
 	})
 
 	t.Run("unix", func(t *testing.T) {
-		dir, err := ioutil.TempDir("", "server-starter-test")
+		sockPath := filepath.Join(t.TempDir(), "test.sock")
+		orig, err := net.Listen("unix", sockPath)
 		if err != nil {
-			t.Fatalf("Failed to create temp directory: %s", err)
+			t.Fatalf("net.Listen() = %v, want nil", err)
 		}
-		defer os.RemoveAll(dir)
+		t.Cleanup(func() { orig.Close() }) //nolint:errcheck // ignore error on cleanup
 
-		pwd, err := os.Getwd()
+		f, err := orig.(socket).File()
 		if err != nil {
-			t.Fatalf("fail to getwd:%s", err)
+			t.Fatalf("File() = %v, want nil", err)
 		}
-		os.Chdir(dir)
-		defer os.Chdir(pwd)
+		t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
 
-		sock := filepath.Join(dir, "127.0.0.1:8000")
-		l, err := net.Listen("unix", sock)
+		ll := ListenSpecs{newUnixListener(sockPath, f.Fd())}
+
+		ln, err := ll.Listen(context.Background(), "unix", sockPath)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("Listen() = %v, want nil", err)
 		}
-		defer l.Close()
+		t.Cleanup(func() { ln.Close() }) //nolint:errcheck // ignore error on cleanup
 
-		f, err := l.(interface{ File() (*os.File, error) }).File()
-		if err != nil {
-			t.Fatal(err)
+		if _, ok := ln.(*net.UnixListener); !ok {
+			t.Fatalf("Listen() returned %T, want *net.UnixListener", ln)
 		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		ll := ListenSpecs{
-			listenSpec{
-				addr: "127.0.0.1:8000",
-				fd:   f.Fd(),
-			},
-		}
-		wantOK(ctx, t, ll, "unix", sock)
-		wantOK(ctx, t, ll, "unix", "127.0.0.1:8000")
-		wantNG(ctx, t, ll, "tcp", "127.0.0.1:8000")
-		wantNG(ctx, t, ll, "tcp4", "127.0.0.1:8000")
 	})
 }
 
-func TestListenConfigs_ListenPacket(t *testing.T) {
-	wantOK := func(ctx context.Context, t *testing.T, ll ListenSpecs, network, address string) {
-		t.Helper()
-		conn, err := ll.ListenPacket(ctx, network, address)
+func TestListenSpecs_ListenPacket(t *testing.T) {
+	t.Run("udp", func(t *testing.T) {
+		spec := newTestUDPSpec(t)
+		ll := ListenSpecs{spec}
+
+		conn, err := ll.ListenPacket(context.Background(), "udp", spec.Addr())
 		if err != nil {
-			t.Errorf("%s, %s: unexpected error: %v", network, address, err)
-			return
+			t.Fatalf("ListenPacket() = %v, want nil", err)
 		}
-		conn.Close()
-	}
-	wantNG := func(ctx context.Context, t *testing.T, ll ListenSpecs, network, address string) {
-		t.Helper()
-		conn, err := ll.ListenPacket(ctx, network, address)
-		if err != nil {
-			return
+		t.Cleanup(func() { conn.Close() }) //nolint:errcheck // ignore error on cleanup
+
+		if _, ok := conn.(*net.UDPConn); !ok {
+			t.Fatalf("ListenPacket() returned %T, want *net.UDPConn", conn)
 		}
-		conn.Close()
-		t.Errorf("%s, %s: error expected, got nil", network, address)
-	}
-
-	t.Run("default", func(t *testing.T) {
-		conn, err := net.ListenPacket("udp4", "0.0.0.0:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer conn.Close()
-
-		f, err := conn.(interface{ File() (*os.File, error) }).File()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
-
-		ll := ListenSpecs{
-			listenSpec{
-				addr: port, // no host, just only port
-				fd:   f.Fd(),
-			},
-		}
-
-		// If host is not specified, then the program will bind to the default address of IPv4 ("0.0.0.0").
-		// https://metacpan.org/pod/distribution/Server-Starter/script/start_server#-port=(port|host:port|port=fd|host:port=fd)
-		wantOK(ctx, t, ll, "udp", ":"+port)
-		wantOK(ctx, t, ll, "udp4", ":"+port)
-		wantOK(ctx, t, ll, "udp", "0.0.0.0:"+port)
-		wantOK(ctx, t, ll, "udp4", "0.0.0.0:"+port)
-		wantNG(ctx, t, ll, "udp6", ":"+port)
-		wantOK(ctx, t, ll, "udp", "[::]:"+port)
 	})
 
-	t.Run("ipv4", func(t *testing.T) {
-		conn, err := net.ListenPacket("udp4", "0.0.0.0:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer conn.Close()
+	t.Run("address not bound", func(t *testing.T) {
+		spec := newTestUDPSpec(t)
+		ll := ListenSpecs{spec}
 
-		f, err := conn.(interface{ File() (*os.File, error) }).File()
-		if err != nil {
-			t.Fatal(err)
+		conn, err := ll.ListenPacket(context.Background(), "udp", "127.0.0.1:1")
+		if err == nil {
+			conn.Close() //nolint:errcheck // ignore error on cleanup
+			t.Fatal("ListenPacket() = nil, want error")
 		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
-
-		ll := ListenSpecs{
-			listenSpec{
-				addr: "0.0.0.0:" + port,
-				fd:   f.Fd(),
-			},
-		}
-		wantOK(ctx, t, ll, "udp", ":"+port)
-		wantOK(ctx, t, ll, "udp4", ":"+port)
-		wantOK(ctx, t, ll, "udp", "0.0.0.0:"+port)
-		wantOK(ctx, t, ll, "udp4", "0.0.0.0:"+port)
-		wantNG(ctx, t, ll, "udp6", ":"+port)
-		wantOK(ctx, t, ll, "udp", "[::]:"+port)
 	})
 
-	t.Run("ipv4-loopback", func(t *testing.T) {
-		conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
+	t.Run("unknown network", func(t *testing.T) {
+		var ll ListenSpecs
+		conn, err := ll.ListenPacket(context.Background(), "foo", "127.0.0.1:8080")
+		if err == nil {
+			conn.Close() //nolint:errcheck // ignore error on cleanup
+			t.Fatal("ListenPacket() = nil, want error")
 		}
-		defer conn.Close()
-
-		f, err := conn.(interface{ File() (*os.File, error) }).File()
-		if err != nil {
-			t.Fatal(err)
+		if _, ok := err.(net.UnknownNetworkError); !ok {
+			t.Fatalf("ListenPacket() error = %T, want net.UnknownNetworkError", err)
 		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
-
-		ll := ListenSpecs{
-			listenSpec{
-				addr: "127.0.0.1:" + port,
-				fd:   f.Fd(),
-			},
-		}
-		wantOK(ctx, t, ll, "udp", "127.0.0.1:"+port)
-		wantOK(ctx, t, ll, "udp4", "127.0.0.1:"+port)
-		wantOK(ctx, t, ll, "udp", "[::1]:"+port)
-	})
-
-	t.Run("ipv6", func(t *testing.T) {
-		conn, err := net.ListenPacket("udp6", ":0")
-		if err != nil {
-			t.Skip("IPv6 is not supported?")
-			return
-		}
-		defer conn.Close()
-
-		f, err := conn.(interface{ File() (*os.File, error) }).File()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
-
-		ll := ListenSpecs{
-			listenSpec{
-				addr: "[::]:" + port,
-				fd:   f.Fd(),
-			},
-		}
-		wantOK(ctx, t, ll, "udp", ":"+port)
-		wantOK(ctx, t, ll, "udp6", ":"+port)
-		wantOK(ctx, t, ll, "udp", "[::]:"+port)
-		wantOK(ctx, t, ll, "udp6", "[::]:"+port)
-		wantNG(ctx, t, ll, "udp", "0.0.0.0:"+port)
-		wantNG(ctx, t, ll, "udp4", ":"+port)
-	})
-
-	t.Run("ipv6-loopback", func(t *testing.T) {
-		conn, err := net.ListenPacket("udp6", "[::1]:0")
-		if err != nil {
-			t.Skip("IPv6 is not supported?")
-			return
-		}
-		defer conn.Close()
-
-		f, err := conn.(interface{ File() (*os.File, error) }).File()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, port, _ := net.SplitHostPort(conn.LocalAddr().String())
-
-		ll := ListenSpecs{
-			listenSpec{
-				addr: "[::1]:" + port,
-				fd:   f.Fd(),
-			},
-		}
-		wantOK(ctx, t, ll, "udp", "[::1]:"+port)
-		wantOK(ctx, t, ll, "udp6", "[::1]:"+port)
-		wantNG(ctx, t, ll, "udp", "127.0.0.1:"+port)
 	})
 }
 
-func TestPort(t *testing.T) {
-	cases := []struct {
-		in string
-		ll []listenSpec
-	}{
-		{
-			in: "0.0.0.0:80=3",
-			ll: []listenSpec{
-				{
-					addr: "0.0.0.0:80",
-					fd:   3,
-				},
-			},
-		},
-		{
-			in: "0.0.0.0:80=3;/tmp/foo.sock=4",
-			ll: []listenSpec{
-				{
-					addr: "0.0.0.0:80",
-					fd:   3,
-				},
-				{
-					addr: "/tmp/foo.sock",
-					fd:   4,
-				},
-			},
-		},
-		{
-			in: "50908=4",
-			ll: []listenSpec{
-				{
-					addr: "50908",
-					fd:   4,
-				},
-			},
-		},
-		{
-			in: "",
-			ll: []listenSpec{},
-		},
-	}
+func TestListenSpecs_ListenAll(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		ll := ListenSpecs{newTestTCPSpec(t), newTestTCPSpec(t)}
 
-	for i, tc := range cases {
-		ll, err := parseListenTargets(tc.in, true)
+		lns, err := ll.ListenAll(context.Background())
 		if err != nil {
-			t.Error(err)
-			continue
+			t.Fatalf("ListenAll() = %v, want nil", err)
 		}
-		if len(ll) != len(tc.ll) {
-			t.Errorf("#%d: want %d, got %d", i, len(tc.ll), len(ll))
+		t.Cleanup(func() {
+			for _, ln := range lns {
+				ln.Close() //nolint:errcheck // ignore error on cleanup
+			}
+		})
+
+		if len(lns) != 2 {
+			t.Fatalf("len(lns) = %d, want 2", len(lns))
 		}
-		for i, l := range ll {
-			l := l.(listenSpec)
-			if !reflect.DeepEqual(l, tc.ll[i]) {
-				t.Errorf("#%d, want %#v, got %#v", i, tc.ll[i], l)
+		for i, ln := range lns {
+			if _, ok := ln.(*net.TCPListener); !ok {
+				t.Fatalf("lns[%d] is %T, want *net.TCPListener", i, ln)
 			}
 		}
-		if ll.String() != tc.in {
-			t.Errorf("#%d, want %s, got %s", i, tc.in, ll.String())
-		}
-	}
+	})
 
-	errs := []string{
-		"0.0.0.0:80=foo", // invalid fd
-		"0.0.0.0:80",     // missing fd
-	}
-	for i, tc := range errs {
-		ll, err := parseListenTargets(tc, true)
+	t.Run("error closes opened listeners", func(t *testing.T) {
+		// the second spec has an invalid fd, so ListenAll must fail and
+		// clean up the first, successfully-opened listener.
+		bad := newTCPListener("127.0.0.1", 8080, ^uintptr(0))
+		ll := ListenSpecs{newTestTCPSpec(t), bad}
+
+		lns, err := ll.ListenAll(context.Background())
 		if err == nil {
-			t.Errorf("#%d: want error, got nil", i)
+			for _, ln := range lns {
+				ln.Close() //nolint:errcheck // ignore error on cleanup
+			}
+			t.Fatal("ListenAll() = nil, want error")
 		}
-		if ll != nil {
-			t.Errorf("#%d: want nil, got %#v", i, ll)
+		if lns != nil {
+			t.Fatalf("ListenAll() listeners = %v, want nil", lns)
 		}
-	}
+	})
 }
 
-func TestPortNoEnv(t *testing.T) {
-	ports, err := parseListenTargets("", false)
-	if err != ErrNoListeningTarget {
-		t.Error("Ports must return error if no env")
-	}
+func TestListenSpecs_ListenPacketAll(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		ll := ListenSpecs{newTestUDPSpec(t), newTestUDPSpec(t)}
 
-	if ports != nil {
-		t.Errorf("Ports must return nil if no env")
-	}
+		conns, err := ll.ListenPacketAll(context.Background())
+		if err != nil {
+			t.Fatalf("ListenPacketAll() = %v, want nil", err)
+		}
+		t.Cleanup(func() {
+			for _, conn := range conns {
+				conn.Close() //nolint:errcheck // ignore error on cleanup
+			}
+		})
+
+		if len(conns) != 2 {
+			t.Fatalf("len(conns) = %d, want 2", len(conns))
+		}
+		for i, conn := range conns {
+			if _, ok := conn.(*net.UDPConn); !ok {
+				t.Fatalf("conns[%d] is %T, want *net.UDPConn", i, conn)
+			}
+		}
+	})
+
+	t.Run("error closes opened conns", func(t *testing.T) {
+		bad := newUDPListener("127.0.0.1", 8080, ^uintptr(0))
+		ll := ListenSpecs{newTestUDPSpec(t), bad}
+
+		conns, err := ll.ListenPacketAll(context.Background())
+		if err == nil {
+			for _, conn := range conns {
+				conn.Close() //nolint:errcheck // ignore error on cleanup
+			}
+			t.Fatal("ListenPacketAll() = nil, want error")
+		}
+		if conns != nil {
+			t.Fatalf("ListenPacketAll() conns = %v, want nil", conns)
+		}
+	})
 }

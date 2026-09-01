@@ -28,7 +28,7 @@ func main() {
 		Handler: mux,
 	}
 
-	l, err := listener.ListenAll(context.Background())
+	l, err := listener.ListenAll()
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"io"
 	"log"
 	"net"
@@ -20,7 +19,7 @@ func main() {
 	go watchSignal()
 
 	pid = []byte(strconv.Itoa(os.Getpid()))
-	l, err := listener.ListenAll(context.Background())
+	l, err := listener.ListenAll()
 	if err != nil {
 		log.Fatal(err)
 	}

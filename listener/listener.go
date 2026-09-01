@@ -8,47 +8,16 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
+
+const wildcardIPv4 = "0.0.0.0"
 
 // ListenConfig is a generator of net.Listener.
 type ListenConfig interface {
 	Listen(ctx context.Context, network, address string) (net.Listener, error)
 	ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error)
-}
-
-// PortEnvName is the environment variable that carries the listener
-// specification.
-const PortEnvName = "SERVER_STARTER_PORT"
-
-// GenerationEnvName is the environment variable that carries the generation
-// number of the server_starter process. It is incremented every time a new
-// worker is started.
-const GenerationEnvName = "SERVER_STARTER_GENERATION"
-
-// IsUnderStartServer reports whether the calling process was spawned by the
-// start_server supervisor.
-func IsUnderStartServer() bool {
-	_, ok := os.LookupEnv(GenerationEnvName)
-	return ok
-}
-
-// Generation returns the generation number of the server_starter process.
-// It is incremented every time a new worker is started.
-// If the process was not started by server_starter, the second return value
-// will be false.
-func Generation() (int, bool) {
-	genStr, ok := os.LookupEnv(GenerationEnvName)
-	if !ok {
-		return 0, false
-	}
-	gen, err := strconv.Atoi(genStr)
-	if err != nil {
-		return 0, false
-	}
-	if gen < 0 {
-		return 0, false
-	}
-	return gen, true
 }
 
 // ErrNoListeningTarget is returned by ListenAll calls
@@ -72,6 +41,163 @@ type ListenSpec interface {
 
 	// return a string compatible with SERVER_STARTER_PORT
 	String() string
+}
+
+var _ ListenSpec = (*TCPListener)(nil)
+
+type TCPListener struct {
+	addr string
+	port int
+	fd   uintptr
+}
+
+func newTCPListener(addr string, port int, fd uintptr) *TCPListener {
+	if addr == "" {
+		addr = wildcardIPv4
+	}
+	return &TCPListener{
+		addr: addr,
+		port: port,
+		fd:   fd,
+	}
+}
+
+func (l *TCPListener) Fd() uintptr {
+	return l.fd
+}
+
+func (l *TCPListener) Listen() (net.Listener, error) {
+	file := os.NewFile(l.fd, l.Addr())
+	if file == nil {
+		return nil, fmt.Errorf("listener: invalid file descriptor: %d", l.fd)
+	}
+	listener, err := net.FileListener(file)
+	closeErr := file.Close()
+	if err != nil {
+		return nil, fmt.Errorf("listener: failed to create TCP listener: %w", err)
+	}
+	if closeErr != nil {
+		listener.Close() //nolint:errcheck // ignore error on cleanup
+		return nil, fmt.Errorf("listener: failed to close file descriptor: %w", closeErr)
+	}
+	return listener, err
+}
+
+func (l *TCPListener) ListenPacket() (net.PacketConn, error) {
+	return nil, errors.New("listener: TCPListener does not support ListenPacket")
+}
+
+func (l *TCPListener) Addr() string {
+	return net.JoinHostPort(l.addr, strconv.Itoa(l.port))
+}
+
+func (l *TCPListener) String() string {
+	if l.addr == wildcardIPv4 {
+		return fmt.Sprintf("%d=%d", l.port, l.fd)
+	}
+	return fmt.Sprintf("%s=%d", l.Addr(), l.fd)
+}
+
+var _ ListenSpec = (*UDPListener)(nil)
+
+type UDPListener struct {
+	addr string
+	port int
+	fd   uintptr
+}
+
+func newUDPListener(addr string, port int, fd uintptr) *UDPListener {
+	if addr == "" {
+		addr = wildcardIPv4
+	}
+	return &UDPListener{
+		addr: addr,
+		port: port,
+		fd:   fd,
+	}
+}
+
+func (l *UDPListener) Fd() uintptr {
+	return l.fd
+}
+
+func (l *UDPListener) Listen() (net.Listener, error) {
+	return nil, errors.New("listener: UDPListener does not support Listen")
+}
+
+func (l *UDPListener) ListenPacket() (net.PacketConn, error) {
+	file := os.NewFile(l.fd, l.Addr())
+	if file == nil {
+		return nil, fmt.Errorf("listener: invalid file descriptor: %d", l.fd)
+	}
+	conn, err := net.FilePacketConn(file)
+	closeErr := file.Close()
+	if err != nil {
+		return nil, fmt.Errorf("listener: failed to create UDP listener: %w", err)
+	}
+	if closeErr != nil {
+		conn.Close() //nolint:errcheck // ignore error on cleanup
+		return nil, fmt.Errorf("listener: failed to close file descriptor: %w", closeErr)
+	}
+	return conn, err
+}
+
+func (l *UDPListener) Addr() string {
+	return net.JoinHostPort(l.addr, strconv.Itoa(l.port))
+}
+
+func (l *UDPListener) String() string {
+	if l.addr == wildcardIPv4 {
+		return fmt.Sprintf("%d=%d", l.port, l.fd)
+	}
+	return fmt.Sprintf("%s=%d", l.Addr(), l.fd)
+}
+
+var _ ListenSpec = (*UnixListener)(nil)
+
+type UnixListener struct {
+	path string
+	fd   uintptr
+}
+
+func newUnixListener(path string, fd uintptr) *UnixListener {
+	return &UnixListener{
+		path: path,
+		fd:   fd,
+	}
+}
+
+func (l *UnixListener) Fd() uintptr {
+	return l.fd
+}
+
+func (l *UnixListener) Listen() (net.Listener, error) {
+	file := os.NewFile(l.fd, l.path)
+	if file == nil {
+		return nil, fmt.Errorf("listener: invalid file descriptor: %d", l.fd)
+	}
+	listener, err := net.FileListener(file)
+	closeErr := file.Close()
+	if err != nil {
+		return nil, fmt.Errorf("listener: failed to create Unix listener: %w", err)
+	}
+	if closeErr != nil {
+		listener.Close() //nolint:errcheck // ignore error on cleanup
+		return nil, fmt.Errorf("listener: failed to close file descriptor: %w", closeErr)
+	}
+	return listener, err
+}
+
+func (l *UnixListener) ListenPacket() (net.PacketConn, error) {
+	return nil, errors.New("listener: UnixListener does not support ListenPacket")
+}
+
+func (l *UnixListener) Addr() string {
+	return l.path
+}
+
+func (l *UnixListener) String() string {
+	return fmt.Sprintf("%s=%d", l.path, l.fd)
 }
 
 // ListenSpecs holds a list of ListenConfig. This is here just for convenience
@@ -299,60 +425,86 @@ func (ll ListenSpecs) ListenPacketAll(ctx context.Context) ([]net.PacketConn, er
 	return ret, nil
 }
 
-type listenSpec struct {
-	addr string
-	fd   uintptr
-}
-
-func (l listenSpec) Addr() string {
-	return l.addr
-}
-
-func (l listenSpec) String() string {
-	return fmt.Sprintf("%s=%d", l.addr, l.fd)
-}
-
-func (l listenSpec) Fd() uintptr {
-	return l.fd
-}
-
-func (l listenSpec) Listen() (net.Listener, error) {
-	return net.FileListener(os.NewFile(l.fd, l.addr))
-}
-
-func (l listenSpec) ListenPacket() (net.PacketConn, error) {
-	return net.FilePacketConn(os.NewFile(l.fd, l.addr))
-}
-
-func parseListenTargets(str string, ok bool) (ListenSpecs, error) {
-	if !ok {
-		return nil, ErrNoListeningTarget
+// cutLast is a port of strings.Cut, which is available since Go 1.27.
+func cutLast(s, sep string) (string, string, bool) {
+	if i := strings.LastIndex(s, sep); i >= 0 {
+		return s[:i], s[i+len(sep):], true
 	}
+	return s, "", false
+}
+
+func splitHostPort(hostport string) (host string, port int, err error) {
+	port, err = strconv.Atoi(hostport)
+	if err == nil {
+		return wildcardIPv4, port, nil
+	}
+	host, portStr, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return "", 0, err
+	}
+	port, err = strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, err
+	}
+	return host, port, nil
+}
+
+func parseListenTargets(str string) (ListenSpecs, error) {
 	if str == "" {
 		return []ListenSpec{}, nil
 	}
 
 	rawspec := strings.Split(str, ";")
-	ret := make([]ListenSpec, len(rawspec))
-
-	for i, pairString := range rawspec {
-		addr, fdString, ok := strings.Cut(pairString, "=")
-		if !ok {
-			return nil, fmt.Errorf("failed to parse '%s' as listen target", pairString)
-		}
-		addr = strings.TrimSpace(addr)
-		fdString = strings.TrimSpace(fdString)
-		fd, err := strconv.ParseUint(fdString, 10, 0)
+	ret := make([]ListenSpec, 0, len(rawspec))
+	for _, pairString := range rawspec {
+		spec, err := parseListenTarget(pairString)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse '%s' as listen target: %s", pairString, err)
+			return nil, err
 		}
-		ret[i] = listenSpec{
-			addr: addr,
-			fd:   uintptr(fd),
-		}
+		ret = append(ret, spec)
+	}
+	return ret, nil
+}
+
+func parseListenTarget(s string) (ListenSpec, error) {
+	addr, fdString, ok := cutLast(s, "=")
+	if !ok {
+		return nil, fmt.Errorf("listener: failed to parse '%s' as listen target", s)
+	}
+	fd, err := strconv.Atoi(fdString)
+	if err != nil {
+		return nil, fmt.Errorf("listener: failed to parse '%s' as listen target: %w", s, err)
 	}
 
-	return ret, nil
+	sa, err := unix.Getsockname(fd)
+	if err != nil {
+		return nil, fmt.Errorf("listener: failed to parse '%s' as listen target: %w", s, err)
+	}
+	soType, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_TYPE)
+	if err != nil {
+		return nil, fmt.Errorf("listener: failed to parse '%s' as listen target: %w", s, err)
+	}
+
+	switch sa.(type) {
+	case *unix.SockaddrUnix:
+		// Unix socket
+		return newUnixListener(addr, uintptr(fd)), nil
+	case *unix.SockaddrInet4, *unix.SockaddrInet6:
+		// TCP or UDP socket
+		host, port, err := splitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("listener: failed to parse '%s' as listen target: %w", s, err)
+		}
+		switch soType {
+		case unix.SOCK_STREAM:
+			// TCP socket
+			return newTCPListener(host, port, uintptr(fd)), nil
+		case unix.SOCK_DGRAM:
+			// UDP socket
+			return newUDPListener(host, port, uintptr(fd)), nil
+		}
+	}
+	return nil, fmt.Errorf("listener: failed to parse '%s' as listen target: unknown socket type", s)
 }
 
 // PortsSpecification returns the value of SERVER_STARTER_PORT
@@ -368,7 +520,11 @@ func PortsSpecification() (string, bool) {
 // and return ListenSpecs.
 // If SERVER_STARTER_PORT is not defined, return ErrNoListeningTarget.
 func Ports() (ListenSpecs, error) {
-	ll, err := parseListenTargets(PortsSpecification())
+	portSpec, ok := PortsSpecification()
+	if !ok {
+		return nil, ErrNoListeningTarget
+	}
+	ll, err := parseListenTargets(portSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -383,30 +539,31 @@ func Ports() (ListenSpecs, error) {
 //	lc, err := listener.PortsFallback()
 //	l, err := lc.Listen(ctx, "tcp", ":8080")
 func PortsFallback() (ListenConfig, error) {
-	ll, err := parseListenTargets(PortsSpecification())
-	if err == nil {
-		return ll, nil
+	portSpec, ok := PortsSpecification()
+	if !ok {
+		return &net.ListenConfig{}, nil
 	}
-	if err != ErrNoListeningTarget {
+	ll, err := parseListenTargets(portSpec)
+	if err != nil {
 		return nil, err
 	}
-	return &net.ListenConfig{}, nil
+	return ll, nil
 }
 
 // ListenAll parses SERVER_STARTER_PORT and creates net.Listener objects.
-func ListenAll(ctx context.Context) ([]net.Listener, error) {
+func ListenAll() ([]net.Listener, error) {
 	ll, err := Ports()
 	if err != nil {
 		return nil, err
 	}
-	return ll.ListenAll(ctx)
+	return ll.ListenAll(context.Background())
 }
 
 // ListenPacketAll parses SERVER_STARTER_PORT and creates net.PacketConn objects.
-func ListenPacketAll(ctx context.Context) ([]net.PacketConn, error) {
+func ListenPacketAll() ([]net.PacketConn, error) {
 	ll, err := Ports()
 	if err != nil {
 		return nil, err
 	}
-	return ll.ListenPacketAll(ctx)
+	return ll.ListenPacketAll(context.Background())
 }

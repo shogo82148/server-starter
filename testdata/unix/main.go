@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"io"
 	"log"
 	"net"
@@ -10,7 +9,7 @@ import (
 )
 
 func main() {
-	l, err := listener.ListenAll(context.Background())
+	l, err := listener.ListenAll()
 	if err != nil {
 		log.Fatal(err)
 	}
