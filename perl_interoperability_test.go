@@ -151,16 +151,26 @@ func TestPerlInteroperabilityGoSupervisorRunsPerlWorkerUDP(t *testing.T) {
 		}
 	}()
 
-	scanner := bufio.NewScanner(r)
 	// wait for starting worker
-	for scanner.Scan() {
-		text := scanner.Text()
-		if strings.HasPrefix(text, "success") {
-			break
+	success := make(chan struct{})
+	go func() {
+		scanner := bufio.NewScanner(r)
+		// wait for starting worker
+		for scanner.Scan() {
+			text := scanner.Text()
+			if strings.HasPrefix(text, "success") {
+				break
+			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("failed to read from pipe: %v", err)
+		if err := scanner.Err(); err != nil {
+			t.Errorf("failed to read from pipe: %v", err)
+		}
+		close(success)
+	}()
+	select {
+	case <-success:
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for worker to start")
 	}
 
 	if err := sd.Shutdown(ctx); err != nil {
