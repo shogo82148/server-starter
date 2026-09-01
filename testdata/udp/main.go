@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"log"
 	"os"
 	"os/signal"
@@ -14,7 +13,7 @@ import (
 func main() {
 	go watchSignal()
 
-	conn, err := listener.ListenPacketAll(context.Background())
+	conn, err := listener.ListenPacketAll()
 	if err != nil {
 		log.Fatal(err)
 	}

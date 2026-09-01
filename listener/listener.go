@@ -551,19 +551,19 @@ func PortsFallback() (ListenConfig, error) {
 }
 
 // ListenAll parses SERVER_STARTER_PORT and creates net.Listener objects.
-func ListenAll(ctx context.Context) ([]net.Listener, error) {
+func ListenAll() ([]net.Listener, error) {
 	ll, err := Ports()
 	if err != nil {
 		return nil, err
 	}
-	return ll.ListenAll(ctx)
+	return ll.ListenAll(context.Background())
 }
 
 // ListenPacketAll parses SERVER_STARTER_PORT and creates net.PacketConn objects.
-func ListenPacketAll(ctx context.Context) ([]net.PacketConn, error) {
+func ListenPacketAll() ([]net.PacketConn, error) {
 	ll, err := Ports()
 	if err != nil {
 		return nil, err
 	}
-	return ll.ListenPacketAll(ctx)
+	return ll.ListenPacketAll(context.Background())
 }
