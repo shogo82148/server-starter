@@ -169,7 +169,7 @@ func (s *Starter) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	s.cancel = cancel
-	defer s.Close() //nolint: errcheck // ignore error on cleanup
+	defer s.Close() //nolint:errcheck // ignore error on cleanup
 
 	// block reload during start up
 	s.lockReload()
@@ -1120,7 +1120,7 @@ func (s *Starter) close() {
 			s.logf("failed to close pid file: %s", err)
 		}
 	}
-	s.logger.Close() //nolint: errcheck // ignore error on cleanup
+	s.logger.Close() //nolint:errcheck // ignore error on cleanup
 }
 
 func (s *Starter) logf(format string, args ...any) {
@@ -1202,7 +1202,7 @@ func (s *Starter) stop() error {
 	if err != nil {
 		return err
 	}
-	defer f.Close() //nolint: errcheck // ignore error on cleanup
+	defer f.Close() //nolint:errcheck // ignore error on cleanup
 
 	buf, err := io.ReadAll(f)
 	if err != nil {

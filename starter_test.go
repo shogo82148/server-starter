@@ -165,7 +165,7 @@ func Test_StartFail(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fail to dial: %s", err)
 		}
-		defer conn.Close() //nolint: errcheck // ignore error on cleanup
+		defer conn.Close() //nolint:errcheck // ignore error on cleanup
 		var buf [1024 * 1024]byte
 		n, err := conn.Read(buf[:])
 		if err != nil {
