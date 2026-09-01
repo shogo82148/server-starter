@@ -165,7 +165,7 @@ func Test_StartFail(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fail to dial: %s", err)
 		}
-		defer conn.Close()
+		defer conn.Close() //nolint:errcheck // ignore error on cleanup
 		var buf [1024 * 1024]byte
 		n, err := conn.Read(buf[:])
 		if err != nil {
@@ -178,7 +178,7 @@ func Test_StartFail(t *testing.T) {
 		Command: binFile,
 		Ports:   []string{"0"},
 	}
-	defer sd.Shutdown(context.Background())
+	t.Cleanup(func() { sd.Close() }) //nolint:errcheck // ignore error on cleanup
 	go func() {
 		if err := sd.Run(); err != nil {
 			t.Errorf("sd.Run() failed: %s", err)
@@ -195,7 +195,11 @@ func Test_StartFail(t *testing.T) {
 		t.Errorf("want %s, got %s", "2", generation)
 	}
 
-	go sd.Reload()
+	go func() {
+		if err := sd.Reload(); err != nil {
+			t.Errorf("sd.Reload() failed: %s", err)
+		}
+	}()
 	time.Sleep(1 * time.Second)
 
 	// the 3rd and 4th generation fails to start, so the generation number is still 2.
@@ -209,6 +213,10 @@ func Test_StartFail(t *testing.T) {
 	generation = getGeneration()
 	if generation != "5" {
 		t.Errorf("want %s, got %s", "5", generation)
+	}
+
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Errorf("sd.Shutdown() failed: %s", err)
 	}
 }
 
@@ -230,7 +238,7 @@ func Test_KillOldDelay(t *testing.T) {
 		KillOldDelay: new(3 * time.Second),
 		StatusFile:   statusFile,
 	}
-	defer sd.Shutdown(context.Background())
+	t.Cleanup(func() { sd.Close() }) //nolint:errcheck // ignore error on cleanup
 	go func() {
 		if err := sd.Run(); err != nil {
 			t.Errorf("sd.Run() failed: %s", err)
@@ -257,7 +265,9 @@ func Test_KillOldDelay(t *testing.T) {
 		t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
 	}
 	pid1 := string(buf[:bytes.IndexByte(buf[:], ':')])
-	conn.Close()
+	if err := conn.Close(); err != nil {
+		t.Fatalf("fail to close: %s", err)
+	}
 
 	time.Sleep(3 * time.Second)
 
@@ -266,7 +276,11 @@ func Test_KillOldDelay(t *testing.T) {
 	// 1sec: if the new worker is still alive, sleep kill_old_delay sec.
 	// 4sec: send SIGTERM to the old worker.
 	// 5sec: the old worker stops.
-	go sd.Reload()
+	go func() {
+		if err := sd.Reload(); err != nil {
+			t.Errorf("sd.Reload() failed: %s", err)
+		}
+	}()
 
 	time.Sleep(4 * time.Second)
 	status, err := os.ReadFile(statusFile)
@@ -305,6 +319,10 @@ func Test_KillOldDelay(t *testing.T) {
 	if pid1 == pid2 {
 		t.Errorf("want another, got %s", pid2)
 	}
+
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Errorf("sd.Shutdown() failed: %s", err)
+	}
 }
 
 func Test_Unix(t *testing.T) {
@@ -326,7 +344,7 @@ func Test_Unix(t *testing.T) {
 		KillOldDelay: new(3 * time.Second),
 		StatusFile:   statusFile,
 	}
-	defer sd.Close()
+	t.Cleanup(func() { sd.Close() }) //nolint:errcheck // ignore error on cleanup
 	go func() {
 		if err := sd.Run(); err != nil {
 			t.Errorf("sd.Run() failed: %s", err)
@@ -350,11 +368,15 @@ func Test_Unix(t *testing.T) {
 	if string(buf[:n]) != "hello" {
 		t.Errorf("want hello, got %s", buf[:n])
 	}
-	conn.Close()
+	if err := conn.Close(); err != nil {
+		t.Errorf("fail to close: %s", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	sd.Shutdown(ctx)
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Errorf("sd.Shutdown() failed: %s", err)
+	}
 
 	if _, err := os.Lstat(sockFile); err == nil {
 		t.Errorf("want %s is removed, but exists", sockFile)
@@ -377,7 +399,7 @@ func Test_Dir(t *testing.T) {
 		Ports:   []string{"0"},
 		Dir:     dir,
 	}
-	defer sd.Shutdown(context.Background())
+	t.Cleanup(func() { sd.Close() }) //nolint:errcheck // ignore error on cleanup
 	go func() {
 		if err := sd.Run(); err != nil {
 			t.Errorf("sd.Run() failed: %s", err)
@@ -400,7 +422,9 @@ func Test_Dir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fail to read: %s", err)
 	}
-	conn.Close()
+	if err := conn.Close(); err != nil {
+		t.Fatalf("fail to close: %s", err)
+	}
 
 	stat1, err := os.Stat(dir)
 	if err != nil {
@@ -413,6 +437,10 @@ func Test_Dir(t *testing.T) {
 
 	if !os.SameFile(stat1, stat2) {
 		t.Errorf("want %s, got %s", stat1.Name(), stat2.Name())
+	}
+
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Errorf("sd.Shutdown() failed: %s", err)
 	}
 }
 
@@ -463,7 +491,9 @@ func Test_AutoRestart(t *testing.T) {
 		t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
 	}
 	pid1 := string(buf[:bytes.IndexByte(buf[:], ':')])
-	conn.Close()
+	if err := conn.Close(); err != nil {
+		t.Fatalf("fail to close: %s", err)
+	}
 
 	// new worker spawn at 7sec (since start, interval(1sec) + auto_restart_interval(6sec))
 	// status updated at 8sec (7sec + interval(1sec))
@@ -643,7 +673,7 @@ func Test_EnvDir(t *testing.T) {
 		Ports:   []string{"0"},
 		EnvDir:  envdir,
 	}
-	defer sd.Shutdown(context.Background())
+	t.Cleanup(func() { sd.Close() }) //nolint:errcheck // ignore error on cleanup
 	go func() {
 		if err := sd.Run(); err != nil {
 			t.Errorf("sd.Run() failed: %s", err)
@@ -695,7 +725,11 @@ func Test_EnvDir(t *testing.T) {
 
 	// after reload, we can get the new environment value
 	time.Sleep(1 * time.Second)
-	go sd.Reload()
+	go func() {
+		if err := sd.Reload(); err != nil {
+			t.Errorf("sd.Reload() failed: %s", err)
+		}
+	}()
 	time.Sleep(2 * time.Second)
 	v, err = getEnv(ctx, envName)
 	if err != nil {
@@ -708,7 +742,11 @@ func Test_EnvDir(t *testing.T) {
 	if err := os.Remove(envfile); err != nil {
 		t.Fatal(err)
 	}
-	go sd.Reload()
+	go func() {
+		if err := sd.Reload(); err != nil {
+			t.Errorf("sd.Reload() failed: %s", err)
+		}
+	}()
 	time.Sleep(2 * time.Second)
 	v, err = getEnv(ctx, envName)
 	if err != nil {
@@ -716,6 +754,10 @@ func Test_EnvDir(t *testing.T) {
 	}
 	if v != "not found!" {
 		t.Errorf("want not found!, got %q", v)
+	}
+
+	if err := sd.Shutdown(ctx); err != nil {
+		t.Fatalf("sd.Shutdown() failed: %s", err)
 	}
 }
 
@@ -784,7 +826,9 @@ func Test_OverrideAutoRestartByEnvDir(t *testing.T) {
 		t.Errorf(`want /^\d+:hello$/, got %s`, buf[:n])
 	}
 	pid1 := string(buf[:bytes.IndexByte(buf[:], ':')])
-	conn.Close()
+	if err := conn.Close(); err != nil {
+		t.Fatalf("fail to close: %s", err)
+	}
 
 	// new worker spawn at 7sec (since start, interval(1sec) + auto_restart_interval(6sec))
 	// status updated at 8sec (7sec + interval(1sec))
@@ -870,9 +914,7 @@ func Test_Logger(t *testing.T) {
 
 	// mock stderr
 	stderr := os.Stderr
-	defer func() {
-		os.Stderr = stderr
-	}()
+	t.Cleanup(func() { os.Stderr = stderr })
 	var wg sync.WaitGroup
 	var buf bytes.Buffer
 	pr, pw, err := os.Pipe()
@@ -881,7 +923,7 @@ func Test_Logger(t *testing.T) {
 	}
 	os.Stderr = pw
 	wg.Go(func() {
-		defer pr.Close()
+		defer pr.Close() //nolint:errcheck // ignore error on cleanup
 		if _, err := io.Copy(&buf, pr); err != nil {
 			t.Error(err)
 		}
@@ -923,7 +965,9 @@ func Test_Logger(t *testing.T) {
 		if err := sd.Shutdown(ctx); err != nil {
 			t.Errorf("sd.Shutdown() failed: %s", err)
 		}
-		pw.Close()
+		if err := pw.Close(); err != nil {
+			t.Errorf("pw.Close() failed: %s", err)
+		}
 		wg.Wait()
 	}()
 
@@ -1070,7 +1114,9 @@ func Test_RestartAndStop(t *testing.T) {
 	)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stderr
-	cmd.Start()
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Failed to start %s: %s", startServer, err)
+	}
 
 	var sd *Starter
 
@@ -1095,5 +1141,7 @@ func Test_RestartAndStop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd.Wait()
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("Failed to wait %s: %s", startServer, err)
+	}
 }

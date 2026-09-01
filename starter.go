@@ -169,7 +169,7 @@ func (s *Starter) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	s.cancel = cancel
-	defer s.Close() //nolint: errcheck // ignore error on cleanup
+	defer s.Close() //nolint:errcheck // ignore error on cleanup
 
 	// block reload during start up
 	s.lockReload()
@@ -248,7 +248,6 @@ func (s *Starter) openLogFile() error {
 			return err
 		}
 		s.logger = l
-		go s.watchLogger()
 		return nil
 	}
 	l, err := newFileLogger(s.LogFile)
@@ -257,24 +256,6 @@ func (s *Starter) openLogFile() error {
 	}
 	s.logger = l
 	return nil
-}
-
-func (s *Starter) watchLogger() {
-	<-s.logger.Done()
-
-	if s.shutdown.Load() {
-		// It is in the shutting down process.
-		// this is the expected behavior.
-		return
-	}
-
-	s.logf("the logger dies unexpectedly. shutting down...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	s.Shutdown(ctx)
-
-	s.logf("exit.")
 }
 
 func (s *Starter) waitSignal() {
@@ -290,7 +271,11 @@ func (s *Starter) waitSignal() {
 		switch sig {
 		case syscall.SIGHUP:
 			s.logf("received HUP, spawning a new worker")
-			go s.Reload()
+			go func() {
+				if err := s.Reload(); err != nil {
+					s.logf("failed to reload: %s", err)
+				}
+			}()
 		default:
 			s.wg.Go(func() {
 				s.shutdownBySignal(sig)
@@ -329,7 +314,9 @@ func (s *Starter) autoRestarter() {
 			if s.tryToLockReload() {
 				go func() {
 					defer s.unlockReload()
-					s.reload()
+					if err := s.reload(); err != nil {
+						s.logf("failed to reload: %s", err)
+					}
 				}()
 			}
 		case <-s.ctx.Done():
@@ -522,7 +509,7 @@ func (w *worker) Wait() {
 func (w *worker) wait() {
 	defer w.starter.wgWorker.Done()
 	defer w.close()
-	w.cmd.Wait()
+	w.cmd.Wait() //nolint:errcheck // ignore error on cleanup
 }
 
 // start to watch the worker itself.
@@ -588,14 +575,13 @@ func (w *worker) Signal(sig os.Signal, state workerState) {
 	}
 }
 
-func (w *worker) close() error {
+func (w *worker) close() {
 	for _, f := range w.cmd.ExtraFiles {
-		f.Close()
+		f.Close() //nolint:errcheck // ignore error on cleanup
 	}
 	w.cancel()
 	close(w.done)
 	w.starter.removeWorker(w)
-	return nil
 }
 
 func (s *Starter) listen() error {
@@ -699,7 +685,7 @@ func (s *Starter) listen() error {
 
 	if errListen != nil {
 		for _, sock := range sockets {
-			sock.Close()
+			sock.Close() //nolint:errcheck // ignore error on cleanup
 		}
 		return errListen
 	}
@@ -1086,16 +1072,22 @@ func (s *Starter) shutdownBySignal(recv os.Signal) {
 		select {
 		case <-w.done:
 		case <-ctx.Done():
-			s.Close()
+			if err := s.Close(); err != nil {
+				s.logf("failed to close: %s", err)
+			}
 			s.logf("exiting")
 			return
 		}
 	}
 
 	// gracefully shutdown the logger
-	s.logger.Shutdown(ctx)
+	if err := s.logger.Shutdown(ctx); err != nil {
+		s.logf("failed to shutdown logger: %s", err)
+	}
 
-	s.Close()
+	if err := s.Close(); err != nil {
+		s.logf("failed to close: %s", err)
+	}
 	s.logf("exiting")
 }
 
@@ -1110,17 +1102,25 @@ func (s *Starter) close() {
 		s.cancel()
 	}
 	s.wgWorker.Wait()
-	s.logger.Close()
 	for _, sock := range s.getSockets() {
-		sock.Close()
+		if err := sock.Close(); err != nil {
+			s.logf("failed to close socket: %s", err)
+		}
 		if l, ok := sock.(*net.UnixListener); ok {
-			os.Remove(l.Addr().String())
+			if err := os.Remove(l.Addr().String()); err != nil {
+				s.logf("failed to remove socket file: %s", err)
+			}
 		}
 	}
 	if f := s.pidFile; f != nil {
-		os.Remove(f.Name())
-		f.Close()
+		if err := os.Remove(f.Name()); err != nil {
+			s.logf("failed to remove pid file: %s", err)
+		}
+		if err := f.Close(); err != nil {
+			s.logf("failed to close pid file: %s", err)
+		}
 	}
+	s.logger.Close() //nolint:errcheck // ignore error on cleanup
 }
 
 func (s *Starter) logf(format string, args ...any) {
@@ -1202,7 +1202,7 @@ func (s *Starter) stop() error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // ignore error on cleanup
 
 	buf, err := io.ReadAll(f)
 	if err != nil {

@@ -19,7 +19,9 @@ func unsetEnv(t *testing.T, key string) {
 	}
 
 	t.Cleanup(func() {
-		os.Setenv(key, prev)
+		if err := os.Setenv(key, prev); err != nil {
+			t.Fatalf("failed to restore env: %v", err)
+		}
 	})
 }
 
