@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -317,6 +318,95 @@ func TestUDPListener_ListenPacket_invalidFd(t *testing.T) {
 	if err == nil {
 		conn.Close() //nolint:errcheck // ignore error on cleanup
 		t.Fatal("ListenPacket() = nil, want error")
+	}
+}
+
+func TestUnixListener_Fd(t *testing.T) {
+	l := newUnixListener("/tmp/test.sock", 42)
+	if l.Fd() != 42 {
+		t.Errorf("Fd() = %d, want 42", l.Fd())
+	}
+}
+
+func TestUnixListener_Addr(t *testing.T) {
+	l := newUnixListener("/tmp/test.sock", 0)
+	if got := l.Addr(); got != "/tmp/test.sock" {
+		t.Errorf("Addr() = %s, want /tmp/test.sock", got)
+	}
+}
+
+func TestUnixListener_String(t *testing.T) {
+	l := newUnixListener("/tmp/test.sock", 3)
+	if got := l.String(); got != "/tmp/test.sock=3" {
+		t.Errorf("String() = %s, want /tmp/test.sock=3", got)
+	}
+}
+
+func TestUnixListener_ListenPacket(t *testing.T) {
+	l := newUnixListener("/tmp/test.sock", 0)
+	conn, err := l.ListenPacket()
+	if err == nil {
+		conn.Close() //nolint:errcheck // ignore error on cleanup
+		t.Fatal("ListenPacket() = nil, want error")
+	}
+}
+
+func TestUnixListener_Listen(t *testing.T) {
+	// create a real Unix socket to obtain a valid file descriptor.
+	sockPath := filepath.Join(t.TempDir(), "test.sock")
+	orig, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("net.Listen() = %v, want nil", err)
+	}
+	t.Cleanup(func() { orig.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	f, err := orig.(socket).File()
+	if err != nil {
+		t.Fatalf("File() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	l := newUnixListener(sockPath, f.Fd())
+
+	ln, err := l.Listen()
+	if err != nil {
+		t.Fatalf("Listen() = %v, want nil", err)
+	}
+	t.Cleanup(func() { ln.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	if _, ok := ln.(*net.UnixListener); !ok {
+		t.Fatalf("Listen() returned %T, want *net.UnixListener", ln)
+	}
+
+	// the returned listener should accept a connection on the same path.
+	go func() {
+		conn, err := net.Dial("unix", sockPath)
+		if err != nil {
+			return
+		}
+		conn.Close() //nolint:errcheck // ignore error on cleanup
+	}()
+
+	conn, err := ln.Accept()
+	if err != nil {
+		t.Fatalf("Accept() = %v, want nil", err)
+	}
+	conn.Close() //nolint:errcheck // ignore error on cleanup
+}
+
+func TestUnixListener_Listen_invalidFd(t *testing.T) {
+	// use a file descriptor that is not a socket.
+	f, err := os.CreateTemp(t.TempDir(), "not-a-socket")
+	if err != nil {
+		t.Fatalf("os.CreateTemp() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	l := newUnixListener("/tmp/test.sock", f.Fd())
+	ln, err := l.Listen()
+	if err == nil {
+		ln.Close() //nolint:errcheck // ignore error on cleanup
+		t.Fatal("Listen() = nil, want error")
 	}
 }
 
