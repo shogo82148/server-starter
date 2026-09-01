@@ -1,6 +1,7 @@
 package listener
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -505,6 +506,256 @@ func TestParseListenTargets(t *testing.T) {
 		}
 		if ll[0].Addr() != l.LocalAddr().String() {
 			t.Fatalf("ll[0].Addr() = %s, want %s", ll[0].Addr(), l.LocalAddr().String())
+		}
+	})
+}
+
+// newTestTCPSpec creates a *TCPListener backed by a real, bound TCP socket.
+func newTestTCPSpec(t *testing.T) *TCPListener {
+	t.Helper()
+	orig, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() = %v, want nil", err)
+	}
+	t.Cleanup(func() { orig.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	f, err := orig.(socket).File()
+	if err != nil {
+		t.Fatalf("File() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	addr := orig.Addr().(*net.TCPAddr)
+	return newTCPListener(addr.IP.String(), addr.Port, f.Fd())
+}
+
+// newTestUDPSpec creates a *UDPListener backed by a real, bound UDP socket.
+func newTestUDPSpec(t *testing.T) *UDPListener {
+	t.Helper()
+	orig, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.ListenPacket() = %v, want nil", err)
+	}
+	t.Cleanup(func() { orig.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	f, err := orig.(socket).File()
+	if err != nil {
+		t.Fatalf("File() = %v, want nil", err)
+	}
+	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+	addr := orig.LocalAddr().(*net.UDPAddr)
+	return newUDPListener(addr.IP.String(), addr.Port, f.Fd())
+}
+
+func TestListenSpecs_String(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		var ll ListenSpecs
+		if got := ll.String(); got != "" {
+			t.Errorf("String() = %q, want empty", got)
+		}
+	})
+
+	t.Run("multiple specs", func(t *testing.T) {
+		ll := ListenSpecs{
+			newTCPListener("", 8080, 3),
+			newTCPListener("127.0.0.1", 8081, 4),
+			newUnixListener("/tmp/test.sock", 5),
+		}
+		want := "8080=3;127.0.0.1:8081=4;/tmp/test.sock=5"
+		if got := ll.String(); got != want {
+			t.Errorf("String() = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestListenSpecs_Listen(t *testing.T) {
+	t.Run("tcp", func(t *testing.T) {
+		spec := newTestTCPSpec(t)
+		ll := ListenSpecs{spec}
+
+		ln, err := ll.Listen(context.Background(), "tcp", spec.Addr())
+		if err != nil {
+			t.Fatalf("Listen() = %v, want nil", err)
+		}
+		t.Cleanup(func() { ln.Close() }) //nolint:errcheck // ignore error on cleanup
+
+		if _, ok := ln.(*net.TCPListener); !ok {
+			t.Fatalf("Listen() returned %T, want *net.TCPListener", ln)
+		}
+	})
+
+	t.Run("address not bound", func(t *testing.T) {
+		spec := newTestTCPSpec(t)
+		ll := ListenSpecs{spec}
+
+		ln, err := ll.Listen(context.Background(), "tcp", "127.0.0.1:1")
+		if err == nil {
+			ln.Close() //nolint:errcheck // ignore error on cleanup
+			t.Fatal("Listen() = nil, want error")
+		}
+	})
+
+	t.Run("unknown network", func(t *testing.T) {
+		var ll ListenSpecs
+		ln, err := ll.Listen(context.Background(), "foo", "127.0.0.1:8080")
+		if err == nil {
+			ln.Close() //nolint:errcheck // ignore error on cleanup
+			t.Fatal("Listen() = nil, want error")
+		}
+		if _, ok := err.(net.UnknownNetworkError); !ok {
+			t.Fatalf("Listen() error = %T, want net.UnknownNetworkError", err)
+		}
+	})
+
+	t.Run("unix", func(t *testing.T) {
+		sockPath := filepath.Join(t.TempDir(), "test.sock")
+		orig, err := net.Listen("unix", sockPath)
+		if err != nil {
+			t.Fatalf("net.Listen() = %v, want nil", err)
+		}
+		t.Cleanup(func() { orig.Close() }) //nolint:errcheck // ignore error on cleanup
+
+		f, err := orig.(socket).File()
+		if err != nil {
+			t.Fatalf("File() = %v, want nil", err)
+		}
+		t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+
+		ll := ListenSpecs{newUnixListener(sockPath, f.Fd())}
+
+		ln, err := ll.Listen(context.Background(), "unix", sockPath)
+		if err != nil {
+			t.Fatalf("Listen() = %v, want nil", err)
+		}
+		t.Cleanup(func() { ln.Close() }) //nolint:errcheck // ignore error on cleanup
+
+		if _, ok := ln.(*net.UnixListener); !ok {
+			t.Fatalf("Listen() returned %T, want *net.UnixListener", ln)
+		}
+	})
+}
+
+func TestListenSpecs_ListenPacket(t *testing.T) {
+	t.Run("udp", func(t *testing.T) {
+		spec := newTestUDPSpec(t)
+		ll := ListenSpecs{spec}
+
+		conn, err := ll.ListenPacket(context.Background(), "udp", spec.Addr())
+		if err != nil {
+			t.Fatalf("ListenPacket() = %v, want nil", err)
+		}
+		t.Cleanup(func() { conn.Close() }) //nolint:errcheck // ignore error on cleanup
+
+		if _, ok := conn.(*net.UDPConn); !ok {
+			t.Fatalf("ListenPacket() returned %T, want *net.UDPConn", conn)
+		}
+	})
+
+	t.Run("address not bound", func(t *testing.T) {
+		spec := newTestUDPSpec(t)
+		ll := ListenSpecs{spec}
+
+		conn, err := ll.ListenPacket(context.Background(), "udp", "127.0.0.1:1")
+		if err == nil {
+			conn.Close() //nolint:errcheck // ignore error on cleanup
+			t.Fatal("ListenPacket() = nil, want error")
+		}
+	})
+
+	t.Run("unknown network", func(t *testing.T) {
+		var ll ListenSpecs
+		conn, err := ll.ListenPacket(context.Background(), "foo", "127.0.0.1:8080")
+		if err == nil {
+			conn.Close() //nolint:errcheck // ignore error on cleanup
+			t.Fatal("ListenPacket() = nil, want error")
+		}
+		if _, ok := err.(net.UnknownNetworkError); !ok {
+			t.Fatalf("ListenPacket() error = %T, want net.UnknownNetworkError", err)
+		}
+	})
+}
+
+func TestListenSpecs_ListenAll(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		ll := ListenSpecs{newTestTCPSpec(t), newTestTCPSpec(t)}
+
+		lns, err := ll.ListenAll(context.Background())
+		if err != nil {
+			t.Fatalf("ListenAll() = %v, want nil", err)
+		}
+		t.Cleanup(func() {
+			for _, ln := range lns {
+				ln.Close() //nolint:errcheck // ignore error on cleanup
+			}
+		})
+
+		if len(lns) != 2 {
+			t.Fatalf("len(lns) = %d, want 2", len(lns))
+		}
+		for i, ln := range lns {
+			if _, ok := ln.(*net.TCPListener); !ok {
+				t.Fatalf("lns[%d] is %T, want *net.TCPListener", i, ln)
+			}
+		}
+	})
+
+	t.Run("error closes opened listeners", func(t *testing.T) {
+		// the second spec has an invalid fd, so ListenAll must fail and
+		// clean up the first, successfully-opened listener.
+		bad := newTCPListener("127.0.0.1", 8080, ^uintptr(0))
+		ll := ListenSpecs{newTestTCPSpec(t), bad}
+
+		lns, err := ll.ListenAll(context.Background())
+		if err == nil {
+			for _, ln := range lns {
+				ln.Close() //nolint:errcheck // ignore error on cleanup
+			}
+			t.Fatal("ListenAll() = nil, want error")
+		}
+		if lns != nil {
+			t.Fatalf("ListenAll() listeners = %v, want nil", lns)
+		}
+	})
+}
+
+func TestListenSpecs_ListenPacketAll(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		ll := ListenSpecs{newTestUDPSpec(t), newTestUDPSpec(t)}
+
+		conns, err := ll.ListenPacketAll(context.Background())
+		if err != nil {
+			t.Fatalf("ListenPacketAll() = %v, want nil", err)
+		}
+		t.Cleanup(func() {
+			for _, conn := range conns {
+				conn.Close() //nolint:errcheck // ignore error on cleanup
+			}
+		})
+
+		if len(conns) != 2 {
+			t.Fatalf("len(conns) = %d, want 2", len(conns))
+		}
+		for i, conn := range conns {
+			if _, ok := conn.(*net.UDPConn); !ok {
+				t.Fatalf("conns[%d] is %T, want *net.UDPConn", i, conn)
+			}
+		}
+	})
+
+	t.Run("error closes opened conns", func(t *testing.T) {
+		bad := newUDPListener("127.0.0.1", 8080, ^uintptr(0))
+		ll := ListenSpecs{newTestUDPSpec(t), bad}
+
+		conns, err := ll.ListenPacketAll(context.Background())
+		if err == nil {
+			for _, conn := range conns {
+				conn.Close() //nolint:errcheck // ignore error on cleanup
+			}
+			t.Fatal("ListenPacketAll() = nil, want error")
+		}
+		if conns != nil {
+			t.Fatalf("ListenPacketAll() conns = %v, want nil", conns)
 		}
 	})
 }
