@@ -471,16 +471,16 @@ func parseListenTarget(s string) (ListenSpec, error) {
 	if !ok {
 		return nil, fmt.Errorf("listener: failed to parse '%s' as listen target", s)
 	}
-	fd, err := strconv.ParseUint(fdString, 10, 0)
+	fd, err := strconv.Atoi(fdString)
 	if err != nil {
 		return nil, fmt.Errorf("listener: failed to parse '%s' as listen target: %w", s, err)
 	}
 
-	sa, err := unix.Getsockname(int(fd))
+	sa, err := unix.Getsockname(fd)
 	if err != nil {
 		return nil, fmt.Errorf("listener: failed to parse '%s' as listen target: %w", s, err)
 	}
-	soType, err := unix.GetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_TYPE)
+	soType, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_TYPE)
 	if err != nil {
 		return nil, fmt.Errorf("listener: failed to parse '%s' as listen target: %w", s, err)
 	}
