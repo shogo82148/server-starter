@@ -287,7 +287,7 @@ func (ll ListenSpecs) Listen(ctx context.Context, network, address string) (net.
 					continue
 				}
 				if _, ok := ln.(*net.UnixListener); !ok {
-					ln.Close()
+					ln.Close() //nolint:errcheck // ignore error on cleanup
 					continue
 				}
 				return ln, nil
@@ -309,7 +309,7 @@ func (ll ListenSpecs) Listen(ctx context.Context, network, address string) (net.
 				continue
 			}
 			if _, ok := ln.(*net.TCPListener); !ok {
-				ln.Close()
+				ln.Close() //nolint:errcheck // ignore error on cleanup
 				continue
 			}
 			return ln, nil
@@ -383,7 +383,7 @@ func (ll ListenSpecs) ListenPacket(ctx context.Context, network, address string)
 				continue
 			}
 			if _, ok := conn.(*net.UDPConn); !ok {
-				conn.Close()
+				conn.Close() //nolint:errcheck // ignore error on cleanup
 				continue
 			}
 			return conn, nil
