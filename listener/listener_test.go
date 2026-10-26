@@ -6,12 +6,26 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
 type socket interface {
 	File() (*os.File, error)
 	Close() error
+}
+
+// dupFd returns a duplicate of f's file descriptor.
+// Listen and ListenPacket take ownership of the file descriptor and close it,
+// so passing f.Fd() directly would close it twice (once more by f.Close),
+// which may close an unrelated file that has reused the same number.
+func dupFd(t *testing.T, f *os.File) uintptr {
+	t.Helper()
+	fd, err := syscall.Dup(int(f.Fd()))
+	if err != nil {
+		t.Fatalf("syscall.Dup() = %v, want nil", err)
+	}
+	return uintptr(fd)
 }
 
 func TestTCPListener_Fd(t *testing.T) {
@@ -121,7 +135,7 @@ func TestTCPListener_Listen(t *testing.T) {
 	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
 
 	addr := orig.Addr().(*net.TCPAddr)
-	l := newTCPListener(addr.IP.String(), addr.Port, f.Fd())
+	l := newTCPListener(addr.IP.String(), addr.Port, dupFd(t, f))
 
 	ln, err := l.Listen()
 	if err != nil {
@@ -157,7 +171,7 @@ func TestTCPListener_Listen_invalidFd(t *testing.T) {
 	}
 	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
 
-	l := newTCPListener("127.0.0.1", 8080, f.Fd())
+	l := newTCPListener("127.0.0.1", 8080, dupFd(t, f))
 	ln, err := l.Listen()
 	if err == nil {
 		ln.Close() //nolint:errcheck // ignore error on cleanup
@@ -272,7 +286,7 @@ func TestUDPListener_ListenPacket(t *testing.T) {
 	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
 
 	addr := orig.LocalAddr().(*net.UDPAddr)
-	l := newUDPListener(addr.IP.String(), addr.Port, f.Fd())
+	l := newUDPListener(addr.IP.String(), addr.Port, dupFd(t, f))
 
 	conn, err := l.ListenPacket()
 	if err != nil {
@@ -314,7 +328,7 @@ func TestUDPListener_ListenPacket_invalidFd(t *testing.T) {
 	}
 	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
 
-	l := newUDPListener("127.0.0.1", 8080, f.Fd())
+	l := newUDPListener("127.0.0.1", 8080, dupFd(t, f))
 	conn, err := l.ListenPacket()
 	if err == nil {
 		conn.Close() //nolint:errcheck // ignore error on cleanup
@@ -367,7 +381,7 @@ func TestUnixListener_Listen(t *testing.T) {
 	}
 	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
 
-	l := newUnixListener(sockPath, f.Fd())
+	l := newUnixListener(sockPath, dupFd(t, f))
 
 	ln, err := l.Listen()
 	if err != nil {
@@ -403,7 +417,7 @@ func TestUnixListener_Listen_invalidFd(t *testing.T) {
 	}
 	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
 
-	l := newUnixListener("/tmp/test.sock", f.Fd())
+	l := newUnixListener("/tmp/test.sock", dupFd(t, f))
 	ln, err := l.Listen()
 	if err == nil {
 		ln.Close() //nolint:errcheck // ignore error on cleanup
@@ -526,7 +540,7 @@ func newTestTCPSpec(t *testing.T) *TCPListener {
 	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
 
 	addr := orig.Addr().(*net.TCPAddr)
-	return newTCPListener(addr.IP.String(), addr.Port, f.Fd())
+	return newTCPListener(addr.IP.String(), addr.Port, dupFd(t, f))
 }
 
 // newTestUDPSpec creates a *UDPListener backed by a real, bound UDP socket.
@@ -545,7 +559,7 @@ func newTestUDPSpec(t *testing.T) *UDPListener {
 	t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
 
 	addr := orig.LocalAddr().(*net.UDPAddr)
-	return newUDPListener(addr.IP.String(), addr.Port, f.Fd())
+	return newUDPListener(addr.IP.String(), addr.Port, dupFd(t, f))
 }
 
 func TestListenSpecs_String(t *testing.T) {
@@ -586,7 +600,8 @@ func TestListenSpecs_Listen(t *testing.T) {
 	})
 
 	t.Run("address not bound", func(t *testing.T) {
-		spec := newTestTCPSpec(t)
+		// Listen is never called on the spec, so it needs no real file descriptor.
+		spec := newTCPListener("127.0.0.1", 8080, ^uintptr(0))
 		ll := ListenSpecs{spec}
 
 		ln, err := ll.Listen(context.Background(), "tcp", "127.0.0.1:1")
@@ -622,7 +637,7 @@ func TestListenSpecs_Listen(t *testing.T) {
 		}
 		t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
 
-		ll := ListenSpecs{newUnixListener(sockPath, f.Fd())}
+		ll := ListenSpecs{newUnixListener(sockPath, dupFd(t, f))}
 
 		ln, err := ll.Listen(context.Background(), "unix", sockPath)
 		if err != nil {
@@ -653,7 +668,8 @@ func TestListenSpecs_ListenPacket(t *testing.T) {
 	})
 
 	t.Run("address not bound", func(t *testing.T) {
-		spec := newTestUDPSpec(t)
+		// ListenPacket is never called on the spec, so it needs no real file descriptor.
+		spec := newUDPListener("127.0.0.1", 8080, ^uintptr(0))
 		ll := ListenSpecs{spec}
 
 		conn, err := ll.ListenPacket(context.Background(), "udp", "127.0.0.1:1")
