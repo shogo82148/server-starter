@@ -600,7 +600,8 @@ func TestListenSpecs_Listen(t *testing.T) {
 	})
 
 	t.Run("address not bound", func(t *testing.T) {
-		spec := newTestTCPSpec(t)
+		// Listen is never called on the spec, so it needs no real file descriptor.
+		spec := newTCPListener("127.0.0.1", 8080, ^uintptr(0))
 		ll := ListenSpecs{spec}
 
 		ln, err := ll.Listen(context.Background(), "tcp", "127.0.0.1:1")
@@ -667,7 +668,8 @@ func TestListenSpecs_ListenPacket(t *testing.T) {
 	})
 
 	t.Run("address not bound", func(t *testing.T) {
-		spec := newTestUDPSpec(t)
+		// ListenPacket is never called on the spec, so it needs no real file descriptor.
+		spec := newUDPListener("127.0.0.1", 8080, ^uintptr(0))
 		ll := ListenSpecs{spec}
 
 		conn, err := ll.ListenPacket(context.Background(), "udp", "127.0.0.1:1")
