@@ -1377,8 +1377,8 @@ func Test_ProcessUIDs(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() {
-			cmd.Process.Kill()
-			cmd.Wait()
+			cmd.Process.Kill() //nolint:errcheck // ignore error on cleanup
+			cmd.Wait()         //nolint:errcheck // the process is killed
 		}()
 
 		ruid, suid, err := processUIDs(cmd.Process.Pid)
