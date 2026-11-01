@@ -1133,7 +1133,13 @@ func (s *Starter) restart() error {
 	}
 
 	// get pid
-	buf, err := os.ReadFile(s.PidFile)
+	f, err := os.OpenFile(s.PidFile, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close() //nolint:errcheck // ignore error on cleanup
+
+	buf, err := io.ReadAll(f)
 	if err != nil {
 		return err
 	}
@@ -1176,6 +1182,9 @@ func (s *Starter) restart() error {
 	if err != nil {
 		return err
 	}
+	if err := verifyPid(f, pid); err != nil {
+		return err
+	}
 	if err := p.Signal(syscall.SIGHUP); err != nil {
 		return err
 	}
@@ -1198,7 +1207,7 @@ func (s *Starter) stop() error {
 	if s.PidFile == "" {
 		return errors.New("--stop option requires --pid-file to be set as well")
 	}
-	f, err := os.OpenFile(s.PidFile, os.O_RDONLY, 0644)
+	f, err := os.OpenFile(s.PidFile, os.O_RDONLY|syscall.O_NOFOLLOW, 0644)
 	if err != nil {
 		return err
 	}
@@ -1219,12 +1228,63 @@ func (s *Starter) stop() error {
 	if err != nil {
 		return err
 	}
+	if err := verifyPid(f, pid); err != nil {
+		return err
+	}
 	if err := p.Signal(syscall.SIGTERM); err != nil {
 		return err
 	}
 
 	if err := flock(f.Fd(), syscall.LOCK_EX); err != nil {
 		return err
+	}
+	return nil
+}
+
+// verifyPid checks that pid read from the pid file f is a process that may be signaled.
+// It refuses if no running start_server holds the lock on f, if f has other hard links,
+// or if pid can't be signaled by the owner of f.
+// The pid file is writable by its owner, which may be less privileged than the caller.
+func verifyPid(f *os.File, pid int) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid pid %d in the pid file %s", pid, f.Name())
+	}
+
+	// start_server holds LOCK_EX on the pid file while it is running.
+	// Probe it with LOCK_SH: it conflicts with LOCK_EX just as LOCK_EX does,
+	// but needs only read access on file systems that emulate flock with fcntl locks (e.g. NFS).
+	err := flock(f.Fd(), syscall.LOCK_SH|syscall.LOCK_NB)
+	if err == nil {
+		flock(f.Fd(), syscall.LOCK_UN) //nolint:errcheck // ignore error on cleanup
+		return fmt.Errorf("the pid file %s is not locked by a running start_server", f.Name())
+	}
+	if !errors.Is(err, syscall.EWOULDBLOCK) {
+		return err
+	}
+
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("failed to get the owner of the pid file %s", f.Name())
+	}
+	if st.Nlink > 1 {
+		return fmt.Errorf("the pid file %s has multiple hard links", f.Name())
+	}
+
+	owner := int(st.Uid)
+	if owner == os.Geteuid() {
+		return nil
+	}
+	ruid, suid, err := processUIDs(pid)
+	if err != nil {
+		return fmt.Errorf("failed to get the owner of pid %d: %w", pid, err)
+	}
+	// same as the permission check of kill(2), on behalf of the owner of the pid file.
+	if ruid != owner && suid != owner {
+		return fmt.Errorf("pid %d is not owned by the owner of the pid file %s", pid, f.Name())
 	}
 	return nil
 }
