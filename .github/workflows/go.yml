@@ -109,8 +109,14 @@ jobs:
         uses: vmactions/netbsd-vm@c8a0d7ddb84619a7a8cc4e652efa7950b3fd9f92 # v1.5.2
         with:
           usesh: true
-          prepare: /usr/sbin/pkg_add go
-          run: go test -v -run 'Test_ProcessUIDs|Test_RestartAndStopVerifyPid' .
+          prepare: |
+            /usr/sbin/pkg_add go
+            ls -d /usr/pkg/go1*
+          # pkgsrc installs go under /usr/pkg/goXYZ without adding it to PATH.
+          run: |
+            PATH="$(ls -d /usr/pkg/go1* | tail -1)/bin:$PATH"
+            go version
+            go test -v -run 'Test_ProcessUIDs|Test_RestartAndStopVerifyPid' .
 
       - name: Test on OpenBSD
         if: matrix.os == 'openbsd'
