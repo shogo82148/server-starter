@@ -81,6 +81,45 @@ jobs:
           flag-name: Go-listener-${{ matrix.go }}-${{ matrix.os }}
           parallel: true
 
+  bsd:
+    name: Test of processUIDs on ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - freebsd
+          - netbsd
+          - openbsd
+
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test on FreeBSD
+        if: matrix.os == 'freebsd'
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        with:
+          usesh: true
+          prepare: pkg install -y go
+          run: go test -v -run 'Test_ProcessUIDs|Test_RestartAndStopVerifyPid' .
+
+      - name: Test on NetBSD
+        if: matrix.os == 'netbsd'
+        uses: vmactions/netbsd-vm@c8a0d7ddb84619a7a8cc4e652efa7950b3fd9f92 # v1.5.2
+        with:
+          usesh: true
+          prepare: /usr/sbin/pkg_add go
+          run: go test -v -run 'Test_ProcessUIDs|Test_RestartAndStopVerifyPid' .
+
+      - name: Test on OpenBSD
+        if: matrix.os == 'openbsd'
+        uses: vmactions/openbsd-vm@f1ca8bc8ecc5b6ef7218e5b914836e067e1546d3 # v1.4.9
+        with:
+          usesh: true
+          prepare: pkg_add go
+          run: go test -v -run 'Test_ProcessUIDs|Test_RestartAndStopVerifyPid' .
+
   # notifies that all test jobs are finished.
   finish:
     needs:

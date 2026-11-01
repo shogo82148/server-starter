@@ -1345,17 +1345,61 @@ func Test_RestartAndStopVerifyPid(t *testing.T) {
 }
 
 func Test_ProcessUIDs(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+	switch runtime.GOOS {
+	case "linux", "darwin", "freebsd", "netbsd", "openbsd":
+	default:
 		t.Skipf("processUIDs is not supported on %s", runtime.GOOS)
 	}
-	ruid, suid, err := processUIDs(os.Getpid())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ruid != os.Getuid() {
-		t.Errorf("want real uid %d, got %d", os.Getuid(), ruid)
-	}
-	if suid != os.Geteuid() {
-		t.Errorf("want saved uid %d, got %d", os.Geteuid(), suid)
-	}
+
+	t.Run("self", func(t *testing.T) {
+		ruid, suid, err := processUIDs(os.Getpid())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ruid != os.Getuid() {
+			t.Errorf("want real uid %d, got %d", os.Getuid(), ruid)
+		}
+		if suid != os.Geteuid() {
+			t.Errorf("want saved uid %d, got %d", os.Geteuid(), suid)
+		}
+	})
+
+	t.Run("another user", func(t *testing.T) {
+		if os.Geteuid() != 0 {
+			t.Skip("this test requires root")
+		}
+		const uid = 65534 // nobody
+		cmd := exec.Command("sleep", "60")
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Credential: &syscall.Credential{Uid: uid, Gid: 0},
+		}
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			cmd.Process.Kill()
+			cmd.Wait()
+		}()
+
+		ruid, suid, err := processUIDs(cmd.Process.Pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ruid != uid {
+			t.Errorf("want real uid %d, got %d", uid, ruid)
+		}
+		if suid != uid {
+			t.Errorf("want saved uid %d, got %d", uid, suid)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		cmd := exec.Command("true")
+		if err := cmd.Run(); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := processUIDs(cmd.Process.Pid); err == nil {
+			t.Error("want error, got nil")
+		}
+	})
 }
