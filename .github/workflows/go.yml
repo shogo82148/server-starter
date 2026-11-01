@@ -24,7 +24,7 @@ jobs:
           go-version: ${{ matrix.go }}
 
       - name: Set up Perl
-        uses: shogo82148/actions-setup-perl@v1.44.3
+        uses: shogo82148/actions-setup-perl@v1.44.4
         with:
           perl-version: "5.44"
 
