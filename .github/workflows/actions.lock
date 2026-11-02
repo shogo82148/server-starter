@@ -12,6 +12,9 @@ workflows:
         - 'goreleaser/goreleaser-action@v7.3.0'
         - 'shogo82148/actions-goveralls@v1.11.5'
         - 'shogo82148/actions-setup-perl@v1.44.4'
+        - 'vmactions/freebsd-vm@v1.5.9'
+        - 'vmactions/netbsd-vm@v1.5.2'
+        - 'vmactions/openbsd-vm@v1.4.9'
     '.github/workflows/release.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
@@ -67,3 +70,18 @@ dependencies:
         commit: 'sha1-3b59bd33efdae98406a9bc4b75a4aa041e11993a'
         owner_id: 1157344
         repo_id: 205511355
+    'vmactions/freebsd-vm@v1.5.9':
+        ref: 'v1.5.9'
+        commit: 'sha1-c46abacb49f09938ca4e1702d15d836285d694cc'
+        owner_id: 71690866
+        repo_id: 300290246
+    'vmactions/netbsd-vm@v1.5.2':
+        ref: 'v1.5.2'
+        commit: 'sha1-c8a0d7ddb84619a7a8cc4e652efa7950b3fd9f92'
+        owner_id: 71690866
+        repo_id: 324264532
+    'vmactions/openbsd-vm@v1.4.9':
+        ref: 'v1.4.9'
+        commit: 'sha1-f1ca8bc8ecc5b6ef7218e5b914836e067e1546d3'
+        owner_id: 71690866
+        repo_id: 300542254
