@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strconv"
 	"sync"
 	"syscall"
 	"testing"
@@ -1144,4 +1147,259 @@ func Test_RestartAndStop(t *testing.T) {
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("Failed to wait %s: %s", startServer, err)
 	}
+}
+
+func Test_RestartAndStopVerifyPid(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+
+	// target is a process that must never be signaled.
+	target := exec.CommandContext(ctx, "sleep", "60")
+	if err := target.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		target.Wait() //nolint:errcheck // the process is killed on cleanup
+		close(done)
+	}()
+	t.Cleanup(func() {
+		target.Process.Kill() //nolint:errcheck // ignore error on cleanup
+		<-done
+	})
+	assertAlive := func(t *testing.T) {
+		t.Helper()
+		select {
+		case <-done:
+			t.Fatalf("the target process is signaled: %s", target.ProcessState)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	targetPid := target.Process.Pid
+
+	statusFile := filepath.Join(dir, "status")
+	if err := os.WriteFile(statusFile, []byte("1:"+strconv.Itoa(targetPid)+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// writePidFile creates a pid file that contains the pid of the target.
+	writePidFile := func(t *testing.T, name string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(strconv.Itoa(targetPid)+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	// lockPidFile locks the pid file as a running start_server does.
+	lockPidFile := func(t *testing.T, path string) {
+		t.Helper()
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+		if err := flock(f.Fd(), syscall.LOCK_EX); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	openPidFile := func(t *testing.T, path string) *os.File {
+		t.Helper()
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { f.Close() }) //nolint:errcheck // ignore error on cleanup
+		return f
+	}
+
+	// run runs the starter, and fails the test instead of hanging if it doesn't return.
+	run := func(t *testing.T, s *Starter) error {
+		t.Helper()
+		ch := make(chan error, 1)
+		go func() {
+			ch <- s.Run()
+		}()
+		select {
+		case err := <-ch:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout")
+			return nil
+		}
+	}
+
+	assertRestartAndStopFail := func(t *testing.T, pidFile string) {
+		t.Helper()
+		if err := run(t, &Starter{PidFile: pidFile, StatusFile: statusFile, Restart: true}); err == nil {
+			t.Error("--restart should fail")
+		}
+		if err := run(t, &Starter{PidFile: pidFile, Stop: true}); err == nil {
+			t.Error("--stop should fail")
+		}
+		assertAlive(t)
+	}
+
+	t.Run("not locked", func(t *testing.T) {
+		path := writePidFile(t, "not-locked.pid")
+		f := openPidFile(t, path)
+		if err := verifyPid(f, targetPid); err == nil {
+			t.Error("verifyPid should fail")
+		}
+
+		// verifyPid must release the lock.
+		g := openPidFile(t, path)
+		if err := flock(g.Fd(), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			t.Errorf("the pid file is still locked: %v", err)
+		}
+		g.Close() //nolint:errcheck // ignore error on cleanup
+
+		assertRestartAndStopFail(t, path)
+	})
+
+	t.Run("invalid pid", func(t *testing.T) {
+		path := writePidFile(t, "invalid.pid")
+		lockPidFile(t, path)
+		f := openPidFile(t, path)
+		for _, pid := range []int{0, -1, -targetPid} {
+			if err := verifyPid(f, pid); err == nil {
+				t.Errorf("verifyPid(%d) should fail", pid)
+			}
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		path := writePidFile(t, "symlink-target.pid")
+		lockPidFile(t, path)
+		link := filepath.Join(dir, "symlink.pid")
+		if err := os.Symlink(path, link); err != nil {
+			t.Fatal(err)
+		}
+		assertRestartAndStopFail(t, link)
+	})
+
+	t.Run("hard link", func(t *testing.T) {
+		path := writePidFile(t, "hardlink-target.pid")
+		lockPidFile(t, path)
+		link := filepath.Join(dir, "hardlink.pid")
+		if err := os.Link(path, link); err != nil {
+			t.Fatal(err)
+		}
+		f := openPidFile(t, link)
+		if err := verifyPid(f, targetPid); err == nil {
+			t.Error("verifyPid should fail")
+		}
+		assertRestartAndStopFail(t, link)
+	})
+
+	t.Run("owned by the operator", func(t *testing.T) {
+		// the owner of the process isn't needed if the operator owns the pid file.
+		if _, _, err := processUIDs(math.MaxInt32); err == nil {
+			t.Fatal("processUIDs should fail for a nonexistent process")
+		}
+		path := writePidFile(t, "owned.pid")
+		lockPidFile(t, path)
+		f := openPidFile(t, path)
+		if err := verifyPid(f, math.MaxInt32); err != nil {
+			t.Error(err)
+		}
+		if err := verifyPid(f, targetPid); err != nil {
+			t.Error(err)
+		}
+	})
+
+	t.Run("owned by another user", func(t *testing.T) {
+		if os.Geteuid() != 0 {
+			t.Skip("this test requires root")
+		}
+		const nobody = 65534
+		path := writePidFile(t, "other.pid")
+		if err := os.Chown(path, nobody, nobody); err != nil {
+			t.Fatal(err)
+		}
+		lockPidFile(t, path)
+		f := openPidFile(t, path)
+		if err := verifyPid(f, targetPid); err == nil {
+			t.Error("verifyPid should fail")
+		}
+		assertRestartAndStopFail(t, path)
+
+		// a process owned by the owner of the pid file is allowed.
+		other := exec.CommandContext(ctx, "sleep", "60")
+		other.SysProcAttr = &syscall.SysProcAttr{
+			Credential: &syscall.Credential{Uid: nobody, Gid: nobody},
+		}
+		if err := other.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			other.Process.Kill() //nolint:errcheck // ignore error on cleanup
+			other.Wait()         //nolint:errcheck // the process is killed
+		}()
+		if err := verifyPid(f, other.Process.Pid); err != nil {
+			t.Error(err)
+		}
+	})
+}
+
+func Test_ProcessUIDs(t *testing.T) {
+	switch runtime.GOOS {
+	case "linux", "darwin", "freebsd", "netbsd", "openbsd":
+	default:
+		t.Skipf("processUIDs is not supported on %s", runtime.GOOS)
+	}
+
+	t.Run("self", func(t *testing.T) {
+		ruid, suid, err := processUIDs(os.Getpid())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ruid != os.Getuid() {
+			t.Errorf("want real uid %d, got %d", os.Getuid(), ruid)
+		}
+		if suid != os.Geteuid() {
+			t.Errorf("want saved uid %d, got %d", os.Geteuid(), suid)
+		}
+	})
+
+	t.Run("another user", func(t *testing.T) {
+		if os.Geteuid() != 0 {
+			t.Skip("this test requires root")
+		}
+		const uid = 65534 // nobody
+		cmd := exec.Command("sleep", "60")
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Credential: &syscall.Credential{Uid: uid, Gid: 0},
+		}
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			cmd.Process.Kill() //nolint:errcheck // ignore error on cleanup
+			cmd.Wait()         //nolint:errcheck // the process is killed
+		}()
+
+		ruid, suid, err := processUIDs(cmd.Process.Pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ruid != uid {
+			t.Errorf("want real uid %d, got %d", uid, ruid)
+		}
+		if suid != uid {
+			t.Errorf("want saved uid %d, got %d", uid, suid)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		cmd := exec.Command("true")
+		if err := cmd.Run(); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := processUIDs(cmd.Process.Pid); err == nil {
+			t.Error("want error, got nil")
+		}
+	})
 }
