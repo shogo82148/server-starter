@@ -13,7 +13,7 @@ workflows:
         - 'shogo82148/actions-goveralls@v1.11.5'
         - 'shogo82148/actions-setup-perl@v1.44.4'
         - 'vmactions/freebsd-vm@v1.5.9'
-        - 'vmactions/netbsd-vm@v1.5.2'
+        - 'vmactions/netbsd-vm@v1.5.3'
         - 'vmactions/openbsd-vm@v1.4.9'
     '.github/workflows/release.yml':
         - 'actions/checkout@v7.0.1'
@@ -75,9 +75,9 @@ dependencies:
         commit: 'sha1-c46abacb49f09938ca4e1702d15d836285d694cc'
         owner_id: 71690866
         repo_id: 300290246
-    'vmactions/netbsd-vm@v1.5.2':
-        ref: 'v1.5.2'
-        commit: 'sha1-c8a0d7ddb84619a7a8cc4e652efa7950b3fd9f92'
+    'vmactions/netbsd-vm@v1.5.3':
+        ref: 'v1.5.3'
+        commit: 'sha1-5957cf330aef2e6ddc63c604364c99ce2e02b91d'
         owner_id: 71690866
         repo_id: 324264532
     'vmactions/openbsd-vm@v1.4.9':
