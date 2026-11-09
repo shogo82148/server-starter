@@ -106,7 +106,7 @@ jobs:
 
       - name: Test on NetBSD
         if: matrix.os == 'netbsd'
-        uses: vmactions/netbsd-vm@v1.5.2
+        uses: vmactions/netbsd-vm@v1.5.3
         with:
           usesh: true
           prepare: |
