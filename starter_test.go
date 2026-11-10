@@ -447,6 +447,29 @@ func Test_Dir(t *testing.T) {
 	}
 }
 
+// waitForStatus polls statusFile until its content matches pattern.
+// It reports an error if the content does not match within timeout.
+func waitForStatus(t *testing.T, statusFile, pattern string, timeout time.Duration) {
+	t.Helper()
+	re := regexp.MustCompile(pattern)
+	deadline := time.Now().Add(timeout)
+	for {
+		status, err := os.ReadFile(statusFile)
+		if err == nil && re.Match(status) {
+			return
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Errorf("fail to read status file %s: %s", statusFile, err)
+			} else {
+				t.Errorf("want /%s/, got %q", pattern, status)
+			}
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func Test_AutoRestart(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()
@@ -513,24 +536,10 @@ func Test_AutoRestart(t *testing.T) {
 	}
 
 	// status during transient state
-	time.Sleep(3 * time.Second)
-	status, err = os.ReadFile(statusFile)
-	if err != nil {
-		t.Errorf("fail to read status file %s: %s", statusFile, err)
-	}
-	if ok, _ := regexp.Match(`^1:\d+\n2:\d+\n$`, status); !ok {
-		t.Errorf(`want /1:\d+\n2:\d+\n/, got %s`, status)
-	}
+	waitForStatus(t, statusFile, `^1:\d+\n2:\d+\n$`, 10*time.Second)
 
 	// status after auto-restart
-	time.Sleep(3 * time.Second)
-	status, err = os.ReadFile(statusFile)
-	if err != nil {
-		t.Errorf("fail to read status file %s: %s", statusFile, err)
-	}
-	if ok, _ := regexp.Match(`^2:\d+\n$`, status); !ok {
-		t.Errorf(`want /2:\d+\n/, got %s`, status)
-	}
+	waitForStatus(t, statusFile, `^2:\d+\n$`, 10*time.Second)
 
 	// connect to the second worker.
 	conn, err = net.Dial("tcp", addr)
@@ -835,7 +844,7 @@ func Test_OverrideAutoRestartByEnvDir(t *testing.T) {
 
 	// new worker spawn at 7sec (since start, interval(1sec) + auto_restart_interval(6sec))
 	// status updated at 8sec (7sec + interval(1sec))
-	// old dies at 11sec (8sec + kill_old_delay(2sec) + sleep(1sec) in the child source code
+	// old dies at 12sec (8sec + kill_old_delay(3sec) + sleep(1sec) in the child source code
 
 	// check status before auto-restart
 	time.Sleep(6 * time.Second)
@@ -848,24 +857,10 @@ func Test_OverrideAutoRestartByEnvDir(t *testing.T) {
 	}
 
 	// status during transient state
-	time.Sleep(3 * time.Second)
-	status, err = os.ReadFile(statusFile)
-	if err != nil {
-		t.Errorf("fail to read status file %s: %s", statusFile, err)
-	}
-	if ok, _ := regexp.Match(`^1:\d+\n2:\d+\n$`, status); !ok {
-		t.Errorf(`want /1:\d+\n2:\d+\n/, got %s`, status)
-	}
+	waitForStatus(t, statusFile, `^1:\d+\n2:\d+\n$`, 10*time.Second)
 
 	// status after auto-restart
-	time.Sleep(3 * time.Second)
-	status, err = os.ReadFile(statusFile)
-	if err != nil {
-		t.Errorf("fail to read status file %s: %s", statusFile, err)
-	}
-	if ok, _ := regexp.Match(`^2:\d+\n$`, status); !ok {
-		t.Errorf(`want /2:\d+\n/, got %s`, status)
-	}
+	waitForStatus(t, statusFile, `^2:\d+\n$`, 10*time.Second)
 
 	// connect to the second worker.
 	conn, err = net.Dial("tcp", addr)
