@@ -12,7 +12,7 @@ workflows:
         - 'goreleaser/goreleaser-action@v7.3.0'
         - 'shogo82148/actions-goveralls@v1.11.5'
         - 'shogo82148/actions-setup-perl@v1.44.5'
-        - 'vmactions/freebsd-vm@v1.5.9'
+        - 'vmactions/freebsd-vm@v1.6.0'
         - 'vmactions/netbsd-vm@v1.5.3'
         - 'vmactions/openbsd-vm@v1.4.9'
     '.github/workflows/release.yml':
@@ -70,9 +70,9 @@ dependencies:
         commit: 'sha1-eebc5c886de14ebbfcd2493d49a12007d2c30477'
         owner_id: 1157344
         repo_id: 205511355
-    'vmactions/freebsd-vm@v1.5.9':
-        ref: 'v1.5.9'
-        commit: 'sha1-c46abacb49f09938ca4e1702d15d836285d694cc'
+    'vmactions/freebsd-vm@v1.6.0':
+        ref: 'v1.6.0'
+        commit: 'sha1-811efaaac0668df8bfb8308c3ec997b5ab50037b'
         owner_id: 71690866
         repo_id: 300290246
     'vmactions/netbsd-vm@v1.5.3':
