@@ -98,7 +98,7 @@ jobs:
 
       - name: Test on FreeBSD
         if: matrix.os == 'freebsd'
-        uses: vmactions/freebsd-vm@v1.5.9
+        uses: vmactions/freebsd-vm@v1.6.0
         with:
           usesh: true
           prepare: pkg install -y go
